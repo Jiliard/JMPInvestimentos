@@ -42,19 +42,15 @@ def obter_dados_base():
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    url = 'https://www.fundamentus.com.br/resultado.php'
-    
-    # DISFARCE AVANÇADO PARA ENGANAR O FIREWALL DO FUNDAMENTUS
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-    }
+    # PULO DO GATO: Usamos um túnel proxy para mascarar o IP do Render e burlar o firewall
+    url = 'https://api.allorigins.win/raw?url=https://www.fundamentus.com.br/resultado.php'
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
     r = requests.get(url, headers=headers)
-    df = pd.read_html(r.content, thousands='.', decimal=',')[0]
+    r.encoding = 'utf-8' # Garante a leitura correta dos caracteres que passam pelo túnel
+    
+    # Lemos o texto bruto devolvido pelo proxy
+    df = pd.read_html(r.text, thousands='.', decimal=',')[0]
     
     cols_percent = ['Div.Yield', 'Mrg Ebit', 'Mrg. Líq.', 'ROIC', 'ROE', 'Cresc. Rec.5a']
     for col in cols_percent:
