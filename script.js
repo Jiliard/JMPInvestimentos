@@ -36,7 +36,9 @@ async function carregarDados() {
     tbody.innerHTML = `<tr><td colspan="13"><div class="spinner-box"><div class="spinner"></div><strong>Consultando base de dados do mercado...</strong></div></td></tr>`;
     
     const p = param => document.getElementById(param).value;
-    const url = `http://127.0.0.1:5000/api/rankings?metodo=${p('metodo')}&liq_min=${p('liq_min')}&pl_max=${p('pl_max')}&pvp_max=${p('pvp_max')}&dy_min=${p('dy_min')}&roe_min=${p('roe_min')}&roic_min=${p('roic_min')}&margem_min=${p('margem_min')}&cagr_min=${p('cagr_min')}`;
+    
+    // ATUALIZADO PARA A API DE PRODUÇÃO NO RENDER
+    const url = `https://jmpinvestimentos.onrender.com/api/rankings?metodo=${p('metodo')}&liq_min=${p('liq_min')}&pl_max=${p('pl_max')}&pvp_max=${p('pvp_max')}&dy_min=${p('dy_min')}&roe_min=${p('roe_min')}&roic_min=${p('roic_min')}&margem_min=${p('margem_min')}&cagr_min=${p('cagr_min')}`;
     
     const res = await fetch(url);
     dadosGlobais = await res.json();
@@ -133,7 +135,8 @@ function mudarPagina(direcao) {
 }
 
 async function carregarTickers() {
-    const res = await fetch('http://127.0.0.1:5000/api/tickers');
+    // ATUALIZADO PARA A API DE PRODUÇÃO NO RENDER
+    const res = await fetch('https://jmpinvestimentos.onrender.com/api/tickers');
     const tickers = await res.json();
     const datalist = document.getElementById('lista-tickers');
     datalist.innerHTML = '';
@@ -157,7 +160,8 @@ async function carregarAnalise() {
     }
 
     try {
-        const res = await fetch(`http://127.0.0.1:5000/api/analise?ticker=${t}&periodo=${p}`);
+        // ATUALIZADO PARA A API DE PRODUÇÃO NO RENDER
+        const res = await fetch(`https://jmpinvestimentos.onrender.com/api/analise?ticker=${t}&periodo=${p}`);
         const data = await res.json();
 
         if(data.error) {
@@ -174,7 +178,6 @@ async function carregarAnalise() {
         const fmtP = val => `${(val*100).toFixed(1)}%`;
         const fmtX = val => `${val.toFixed(2)}x`;
 
-        // REMOVIDOS OS DOIS PONTOS (:) DE TODOS OS INDICADORES DO RAIO-X
         fichaContainer.innerHTML = `
             <div class="raio-x-box">
                 <div class="raio-x-header">
