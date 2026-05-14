@@ -37,42 +37,47 @@ async function carregarDados() {
     
     const p = param => document.getElementById(param).value;
     
-    // ATUALIZADO PARA A API DE PRODUÇÃO NO RENDER
+    // LINK OFICIAL DO RENDER
     const url = `https://jmpinvestimentos.onrender.com/api/rankings?metodo=${p('metodo')}&liq_min=${p('liq_min')}&pl_max=${p('pl_max')}&pvp_max=${p('pvp_max')}&dy_min=${p('dy_min')}&roe_min=${p('roe_min')}&roic_min=${p('roic_min')}&margem_min=${p('margem_min')}&cagr_min=${p('cagr_min')}`;
     
-    const res = await fetch(url);
-    dadosGlobais = await res.json();
-    paginaAtual = 1;
-    
-    document.getElementById('kpi-count').innerText = dadosGlobais.length;
-    const pls = dadosGlobais.filter(d => d.pl > 0).map(d => d.pl).sort((a,b) => a-b);
-    document.getElementById('kpi-pl').innerText = pls.length ? `${pls[Math.floor(pls.length/2)].toFixed(1)}x` : '-';
-    const med = campo => dadosGlobais.reduce((acc, item) => acc + item[campo], 0) / (dadosGlobais.length || 1);
-    document.getElementById('kpi-roic').innerText = `${(med('roic')*100).toFixed(1)}%`;
-    document.getElementById('kpi-dy').innerText = `${(med('dy')*100).toFixed(1)}%`;
+    try {
+        const res = await fetch(url);
+        dadosGlobais = await res.json();
+        paginaAtual = 1;
+        
+        document.getElementById('kpi-count').innerText = dadosGlobais.length;
+        const pls = dadosGlobais.filter(d => d.pl > 0).map(d => d.pl).sort((a,b) => a-b);
+        document.getElementById('kpi-pl').innerText = pls.length ? `${pls[Math.floor(pls.length/2)].toFixed(1)}x` : '-';
+        const med = campo => dadosGlobais.reduce((acc, item) => acc + item[campo], 0) / (dadosGlobais.length || 1);
+        document.getElementById('kpi-roic').innerText = `${(med('roic')*100).toFixed(1)}%`;
+        document.getElementById('kpi-dy').innerText = `${(med('dy')*100).toFixed(1)}%`;
 
-    const m = p('metodo');
-    const col1 = document.getElementById('th-col1');
-    const col2 = document.getElementById('th-col2');
-    
-    col1.style.display = "";
-    col2.style.display = "";
-    
-    if(m === 'graham') {
-        col1.innerHTML = 'Valor Justo Graham <span class="tooltip" title="Preço teto estimado pela fórmula de Benjamin Graham baseada em LPA e VPA.">ⓘ</span>';
-        col2.innerHTML = 'Margem de Segurança <span class="tooltip" title="Percentual de desconto do preço atual em relação ao Valor Justo estimado.">ⓘ</span>';
-    } else if(m === 'bazin') {
-        col1.innerHTML = 'Preço Teto Bazin <span class="tooltip" title="Preço máximo para garantir um retorno de dividendos mínimo de 6% ao ano.">ⓘ</span>';
-        col2.innerHTML = 'Potencial de Renda <span class="tooltip" title="Margem percentual entre a cotação atual e o Preço Teto calculado.">ⓘ</span>';
-    } else if(m === 'greenblatt') {
-        col1.innerHTML = 'Pontuação Geral <span class="tooltip" title="Soma dos rankings de ROIC e EV/EBIT. Quanto menor a pontuação, melhor.">ⓘ</span>';
-        col2.style.display = "none"; 
-    } else if(m === 'lynch') {
-        col1.innerHTML = 'PEG Ratio <span class="tooltip" title="P/L dividido pelo crescimento da receita. Valores abaixo de 1.0 indicam subvalorização.">ⓘ</span>';
-        col2.innerHTML = 'Crescimento (CAGR) <span class="tooltip" title="Taxa de crescimento anual composta da receita usada como base para o método.">ⓘ</span>';
+        const m = p('metodo');
+        const col1 = document.getElementById('th-col1');
+        const col2 = document.getElementById('th-col2');
+        
+        col1.style.display = "";
+        col2.style.display = "";
+        
+        if(m === 'graham') {
+            col1.innerHTML = 'Valor Justo Graham';
+            col2.innerHTML = 'Margem de Segurança';
+        } else if(m === 'bazin') {
+            col1.innerHTML = 'Preço Teto Bazin';
+            col2.innerHTML = 'Potencial de Renda';
+        } else if(m === 'greenblatt') {
+            col1.innerHTML = 'Pontuação Geral';
+            col2.style.display = "none"; 
+        } else if(m === 'lynch') {
+            col1.innerHTML = 'PEG Ratio';
+            col2.innerHTML = 'Crescimento (CAGR)';
+        }
+
+        renderizarTabela();
+    } catch (error) {
+        // TRAVA DE SEGURANÇA: Se o Render demorar a acordar, não trava a tela
+        tbody.innerHTML = `<tr><td colspan="13"><div class="placeholder-box"><h3 style="color:#ef5350;">Aguardando Servidor</h3><p>O servidor está iniciando. Atualize a página em alguns segundos.</p></div></td></tr>`;
     }
-
-    renderizarTabela();
 }
 
 function renderizarTabela() {
@@ -135,7 +140,7 @@ function mudarPagina(direcao) {
 }
 
 async function carregarTickers() {
-    // ATUALIZADO PARA A API DE PRODUÇÃO NO RENDER
+    // LINK OFICIAL DO RENDER
     const res = await fetch('https://jmpinvestimentos.onrender.com/api/tickers');
     const tickers = await res.json();
     const datalist = document.getElementById('lista-tickers');
@@ -160,7 +165,7 @@ async function carregarAnalise() {
     }
 
     try {
-        // ATUALIZADO PARA A API DE PRODUÇÃO NO RENDER
+        // LINK OFICIAL DO RENDER
         const res = await fetch(`https://jmpinvestimentos.onrender.com/api/analise?ticker=${t}&periodo=${p}`);
         const data = await res.json();
 
