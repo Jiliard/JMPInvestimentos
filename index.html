@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>JMP Investimento | Sistema de Apoio à Decisão B3</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+    <header>
+        <div class="brand-container">
+            <svg class="brand-logo" viewBox="0 0 24 24" fill="none" stroke="#4cd681" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+            </svg>
+            <h1>JMP <span>Investimento</span></h1>
+        </div>
+        <nav class="nav-pills">
+            <button class="tab-btn active" onclick="mudarAba('screener')">Filtro de Ações</button>
+            <button class="tab-btn" onclick="mudarAba('detalhes')">Análise Detalhada</button>
+        </nav>
+    </header>
+
+    <main class="container">
+        <div id="aba-screener" class="aba-content active">
+            <section class="top-controls">
+                <div class="filter-group select-strategy">
+                    <label>Estratégia de Ranking 
+                        <span class="tooltip" id="tooltip-metodo" title="Benjamin Graham: Calcula o valor intrínseco baseado no patrimônio e lucro da empresa, ordenando pela margem de segurança.">ⓘ</span>
+                    </label>
+                    <select id="metodo" onchange="atualizarTooltipMetodo(); carregarDados();">
+                        <option value="graham">Método Graham (Valor Intrínseco)</option>
+                        <option value="bazin">Método Bazin (Foco em Dividendos)</option>
+                        <option value="greenblatt">Método Greenblatt (Qualidade e Preço)</option>
+                        <option value="lynch">Método Peter Lynch (Crescimento GARP)</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Liquidez Mínima (R$) <span class="tooltip" title="Volume financeiro médio negociado diariamente. Filtra ações sem negociação.">ⓘ</span></label>
+                    <input type="number" id="liq_min" value="100000" step="100000" onchange="carregarDados()">
+                </div>
+            </section>
+
+            <details class="filtros-expander" open>
+                <summary>Filtros de Fundamentos</summary>
+                <div class="filtros-grid">
+                    <div class="filter-group">
+                        <label>P/L Máximo <span class="tooltip" title="Preço sobre Lucro. Indica quantos anos levaria para reaver o capital investido através dos lucros atuais.">ⓘ</span></label>
+                        <input type="number" id="pl_max" value="30" onchange="carregarDados()">
+                    </div>
+                    <div class="filter-group">
+                        <label>P/VP Máximo <span class="tooltip" title="Preço sobre Valor Patrimonial. Relação entre o preço da ação e o patrimônio líquido da empresa.">ⓘ</span></label>
+                        <input type="number" id="pvp_max" value="3" onchange="carregarDados()">
+                    </div>
+                    <div class="filter-group">
+                        <label>DY Mínimo (%) <span class="tooltip" title="Dividend Yield. Rendimento percentual dos dividendos pagos nos últimos 12 meses.">ⓘ</span></label>
+                        <input type="number" id="dy_min" value="0" onchange="carregarDados()">
+                    </div>
+                    <div class="filter-group">
+                        <label>ROE Mínimo (%) <span class="tooltip" title="Retorno sobre o Patrimônio Líquido. Eficiência da empresa em gerar lucro com seus próprios recursos.">ⓘ</span></label>
+                        <input type="number" id="roe_min" value="0" onchange="carregarDados()">
+                    </div>
+                    <div class="filter-group">
+                        <label>ROIC Mínimo (%) <span class="tooltip" title="Retorno sobre o Capital Investido. Eficiência operacional total considerando capital próprio e dívidas.">ⓘ</span></label>
+                        <input type="number" id="roic_min" value="0" onchange="carregarDados()">
+                    </div>
+                    <div class="filter-group">
+                        <label>Margem Mínima (%) <span class="tooltip" title="Margem Líquida. Porcentagem de lucro líquido que a empresa obtém de cada real faturado.">ⓘ</span></label>
+                        <input type="number" id="margem_min" value="0" onchange="carregarDados()">
+                    </div>
+                    <div class="filter-group">
+                        <label>Cresc. 5a Mínimo (%) <span class="tooltip" title="CAGR. Taxa de crescimento anual composta da receita nos últimos 5 anos.">ⓘ</span></label>
+                        <input type="number" id="cagr_min" value="0" onchange="carregarDados()">
+                    </div>
+                </div>
+            </details>
+
+            <section class="metrics-container">
+                <div class="metric-card"><span>Ações Listadas</span><h2 id="kpi-count">-</h2></div>
+                <div class="metric-card"><span>P/L Mediano</span><h2 id="kpi-pl">-</h2></div>
+                <div class="metric-card"><span>ROIC Médio</span><h2 id="kpi-roic">-</h2></div>
+                <div class="metric-card"><span>DY Médio</span><h2 id="kpi-dy">-</h2></div>
+            </section>
+
+            <table id="tabela-resultados">
+                <thead>
+                    <tr>
+                        <th>Ranking</th>
+                        <th>Logo</th>
+                        <th>Empresa</th>
+                        <th>Ativo</th>
+                        <th>Cotação</th>
+                        <th id="th-col1">Valor Justo</th>
+                        <th id="th-col2">Margem de Segurança</th>
+                        <th>P/L <span class="tooltip" title="Preço / Lucro: Quantos anos para reaver o investimento através dos lucros atuais.">ⓘ</span></th>
+                        <th>P/VP <span class="tooltip" title="Preço / Valor Patrimonial: Preço da ação dividido pelo patrimônio líquido por ação.">ⓘ</span></th>
+                        <th>ROIC <span class="tooltip" title="Retorno sobre Capital Investido: Eficiência na alocação de todo o capital (próprio + dívidas).">ⓘ</span></th>
+                        <th>ROE <span class="tooltip" title="Retorno sobre Patrimônio Líquido: Rentabilidade gerada a partir dos recursos dos acionistas.">ⓘ</span></th>
+                        <th>DY <span class="tooltip" title="Dividend Yield: Rendimento percentual gerado por dividendos nos últimos 12 meses.">ⓘ</span></th>
+                        <th>CAGR 5a <span class="tooltip" title="Taxa de crescimento anual composta da receita nos últimos 5 anos.">ⓘ</span></th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+
+            <div class="paginacao">
+                <span id="pag-info">Exibindo 0-0 de 0 ativos</span>
+                <div class="pag-controls">
+                    <button onclick="mudarPagina(-1)">◀ Anterior</button>
+                    <span id="pag-atual">Página 1</span>
+                    <button onclick="mudarPagina(1)">Próxima ▶</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="aba-detalhes" class="aba-content">
+            <section class="chart-header">
+                <div class="filter-group" style="flex-grow: 1;">
+                    <label>Buscar Ativo</label>
+                    <input type="text" id="input-ticker" list="lista-tickers" placeholder="Digite o Ticker..." onchange="carregarAnalise()">
+                    <datalist id="lista-tickers"></datalist>
+                </div>
+            </section>
+
+            <div id="analise-wrapper">
+                <div id="ficha-container" style="margin-bottom: 30px;">
+                    <div class="placeholder-box">
+                        <h3>Nenhum ativo selecionado.</h3>
+                        <p>Busque uma ação na barra superior para carregar os fundamentos e a análise técnica.</p>
+                    </div>
+                </div>
+
+                <div id="chart-section" class="raio-x-box" style="padding: 25px 30px; display: none;">
+                    <div class="chart-controls" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #30363d; padding-bottom: 15px;">
+                        <h4 style="margin: 0; color: #4cd681; font-size: 1.2rem;">Histórico de Cotações</h4>
+                        <div class="filter-group" style="flex-direction: row; align-items: center;">
+                            <label style="margin: 0;">Período do Gráfico:</label>
+                            <select id="select-periodo" onchange="carregarAnalise()">
+                                <option value="30 Dias">30 Dias</option>
+                                <option value="6 Meses">6 Meses</option>
+                                <option value="1 Ano" selected>1 Ano</option>
+                                <option value="5 Anos">5 Anos</option>
+                                <option value="10 Anos">10 Anos</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="chart-container"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+    <script src="script.js"></script>
+</body>
+</html>
