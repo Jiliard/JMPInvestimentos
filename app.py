@@ -47,37 +47,38 @@ def obter_dados_base():
         return _CACHE["df"].copy()
         
     # ==============================================================================
-    # SISTEMA ANTI-BLOQUEIO RESILIENTE (ROTAÇÃO DE PROXIES)
+    # SISTEMA ANTI-BLOQUEIO RESILIENTE COM VALIDAÇÃO DE COLUNAS
     # ==============================================================================
     rotas = [
+        "https://api.allorigins.win/raw?url=https://www.fundamentus.com.br/resultado.php",
         "https://api.codetabs.com/v1/proxy?quest=https://www.fundamentus.com.br/resultado.php",
         "https://corsproxy.io/?https://www.fundamentus.com.br/resultado.php",
-        "https://api.allorigins.win/raw?url=https://www.fundamentus.com.br/resultado.php",
         "https://www.fundamentus.com.br/resultado.php"
     ]
     
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Referer': 'https://www.fundamentus.com.br/'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     }
     
     df = pd.DataFrame()
     
     for url in rotas:
         try:
-            r = requests.get(url, headers=headers, timeout=12)
+            r = requests.get(url, headers=headers, timeout=15)
             r.encoding = 'utf-8' if 'proxy' in url or 'allorigins' in url else 'ISO-8859-1'
             
             tabelas = pd.read_html(r.text, thousands='.', decimal=',')
             if tabelas and len(tabelas) > 0:
-                df = tabelas[0]
-                break  # SUCESSO! Conseguiu extrair a tabela, sai da roleta de proxies.
+                temp_df = tabelas[0]
+                
+                # VALIDAÇÃO CRÍTICA: Tem certeza que é a tabela do Fundamentus?
+                if 'Papel' in temp_df.columns and 'Mrg. Líq.' in temp_df.columns:
+                    df = temp_df
+                    break  # É a tabela certa! Sai da roleta de proxies.
         except Exception:
-            continue  # Fomos bloqueados nesta tentativa, gira a roleta e tenta o próximo.
+            continue  # Falhou ou foi bloqueado, tenta o próximo da lista.
 
-    # Trava de segurança definitiva: se todos os proxies do mundo falharem, não trava a tela
+    # Trava de segurança definitiva: se todos os proxies falharem, retorna vazio
     if df.empty:
         return df
         
