@@ -19,24 +19,30 @@ def obter_dados_base():
     global _CACHE
     agora = time.time()
     
-    # Se os dados já foram baixados há menos de 30 minutos, devolve instantaneamente
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    # Endpoint JSON Oficial e Rápido do StatusInvest (1 requisição = Todas as ações)
     url = 'https://statusinvest.com.br/category/advancedsearchresult?search=%7B%22Sector%22%3A%22%22%2C%22SubSector%22%3A%22%22%2C%22Segment%22%3A%22%22%2C%22my_range%22%3A%22-20%3B100%22%2C%22CompanySize%22%3A%22%22%2C%22MinPE%22%3A%22%22%2C%22MaxPE%22%3A%22%22%2C%22MinPVP%22%3A%22%22%2C%22MaxPVP%22%3A%22%22%2C%22MinDividendYield%22%3A%22%22%2C%22MaxDividendYield%22%3A%22%22%2C%22MinMarketCap%22%3A%22%22%2C%22MaxMarketCap%22%3A%22%22%7D&CategoryType=1'
     
     try:
-        # Imita a assinatura de um navegador real para passar livre por firewalls
         scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36', 'Accept': 'application/json'}
         
         r = scraper.get(url, headers=headers, timeout=20)
-        lista_acoes = r.json()
+        dados_json = r.json()
         
+        # PULO DO GATO: Abre o envelope "list" caso a API do StatusInvest retorne assim
+        if isinstance(dados_json, dict) and 'list' in dados_json:
+            lista_acoes = dados_json['list']
+        else:
+            lista_acoes = dados_json
+            
         df = pd.DataFrame(lista_acoes)
         
-        # Traduzindo as colunas vindas do StatusInvest para o padrão do nosso app
+        if df.empty or 'ticker' not in df.columns:
+            return pd.DataFrame()
+        
+        # Traduzindo as colunas
         df = df.rename(columns={
             'price': 'preco',
             'p_L': 'pl',
@@ -49,16 +55,24 @@ def obter_dados_base():
             'dividaLiquidaPatrimonio': 'divida_patrimonio'
         })
         
+        # BLINDAGEM MÁXIMA: Garante que TODAS as colunas que precisamos existem no DataFrame
+        colunas_esperadas = ['preco', 'pl', 'pvp', 'margem', 'liquidez', 'crescimento', 'evebit', 'patrimonio', 'divida_patrimonio', 'dy', 'roic', 'roe']
+        for col in colunas_esperadas:
+            if col not in df.columns:
+                df[col] = 0
+        
         # Normalizando percentuais (A API devolve 5.0 para representar 5%)
         cols_percent = ['dy', 'roic', 'roe', 'margem', 'crescimento']
         for col in cols_percent:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce') / 100.0
+            df[col] = pd.to_numeric(df[col], errors='coerce') / 100.0
                 
-        # Tratando as colunas numéricas comuns
-        for col in ['pl', 'pvp', 'evebit', 'patrimonio', 'divida_patrimonio', 'lpa', 'vpa', 'preco', 'liquidez']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+        # Tratando as colunas numéricas
+        for col in ['pl', 'pvp', 'evebit', 'patrimonio', 'divida_patrimonio', 'preco', 'liquidez']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+        # Recalculando LPA e VPA caso a API não tenha enviado
+        df['lpa'] = df.apply(lambda r: r['preco'] / r['pl'] if r['pl'] > 0 else 0, axis=1)
+        df['vpa'] = df.apply(lambda r: r['preco'] / r['pvp'] if r['pvp'] > 0 else 0, axis=1)
                 
         # Links visuais e Nomes
         df['logo'] = df['ticker'].apply(lambda x: f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{str(x)[:4]}.png")
@@ -169,7 +183,6 @@ def get_analise_completa():
     p_map = {"30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"}
     chart_data = None
 
-    # O gráfico continua vindo do Yahoo Finance porque ele não sofre com Rate Limit se buscar apenas 1 ativo por vez
     try:
         df_yf = yf.download(ticker_input + '.SA', period=p_map.get(periodo_solicitado, "1y"), progress=False, ignore_tz=True)
         if not df_yf.empty:
