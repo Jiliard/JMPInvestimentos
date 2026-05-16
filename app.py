@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import requests
 import yfinance as yf
+import cloudscraper
 import warnings
 import time
 import io
@@ -14,30 +15,30 @@ app = Flask(__name__)
 CORS(app)
 
 # ==============================================================================
-# BASE DE ATIVOS B3 PARA CRUZAMENTO DE NOMES
+# BASE DE ATIVOS B3 (Nomes oficiais para cruzamento)
 # ==============================================================================
 NOMES_B3 = {
-    "PETR": "Petrobras", "VALE": "Vale S.A.", "ITUB": "Itaú Unibanco", "BBDC": "Banco Bradesco",
-    "BBAS": "Banco do Brasil", "ABEV": "Ambev S.A.", "WEGE": "WEG Equipamentos", "ELET": "Eletrobras",
-    "RENT": "Localiza Rent a Car", "B3SA": "B3 Bolsa e Balcão", "SUZB": "Suzano Papel", "RDOR": "Rede D'Or São Luiz",
-    "RADL": "Raia Drogasil", "CSNA": "Siderúrgica Nacional", "GGBR": "Gerdau S.A.", "USIM": "Usiminas",
-    "JBSS": "JBS Alimentos", "MRFG": "Marfrig Global", "BEEF": "Minerva Foods", "CMIG": "Cemig Energia",
-    "SBSP": "Sabesp Saneamento", "CPLE": "Copel Energia", "ENEV": "Eneva Geração", "EGIE": "Engie Brasil",
-    "CCRO": "Grupo CCR", "GOAU": "Metalúrgica Gerdau", "KLBN": "Klabin Celulose", "CYRE": "Cyrela Empreendimentos",
-    "MRVE": "MRV Engenharia", "EZTC": "EZTEC Construtora", "LREN": "Lojas Renner", "MGLU": "Magazine Luiza",
-    "ASAI": "Assaí Atacadista", "CRFB": "Carrefour Brasil", "NTCO": "Natura &Co", "TIMS": "TIM Brasil",
-    "VIVT": "Telefônica Brasil (Vivo)", "HYPE": "Hypera Pharma", "FLRY": "Grupo Fleury", "TOTS": "Totvs Tecnologia",
-    "CSAN": "Cosan S.A.", "RAIZ": "Raízen Energia", "VBBR": "Vibra Energia", "UGPA": "Ultrapar Participações",
-    "BRKM": "Braskem Química", "CIEL": "Cielo S.A.", "PSSA": "Porto Seguro", "BBSE": "BB Seguridade",
-    "CXSE": "Caixa Seguridade", "MDIA": "M. Dias Branco", "SMTO": "São Martinho", "SLCE": "SLC Agrícola",
-    "ALOS": "Allos Shoppings", "IGTI": "Iguatemi S.A.", "MULT": "Multiplan Empreendimentos", "TAEE": "Taesa Transmissão",
-    "TRPL": "ISA CTEEP", "SANB": "Banco Santander", "BPAC": "BTG Pactual", "PRIO": "Prio Petróleo",
-    "RECV": "PetroRecôncavo", "SOMA": "Grupo Soma", "ARZZ": "Arezzo&Co", "CVCB": "CVC Viagens",
-    "GOLL": "Gol Linhas Aéreas", "AZUL": "Azul Linhas Aéreas", "EMBR": "Embraer Aviação", "POMO": "Marcopolo"
+    "PETR4": "Petrobras", "VALE3": "Vale S.A.", "ITUB4": "Itaú Unibanco", "BBDC4": "Banco Bradesco",
+    "BBAS3": "Banco do Brasil", "ABEV3": "Ambev S.A.", "WEGE3": "WEG Equipamentos", "ELET3": "Eletrobras",
+    "RENT3": "Localiza", "B3SA3": "B3", "SUZB3": "Suzano", "RDOR3": "Rede D'Or",
+    "RADL3": "Raia Drogasil", "CSNA3": "Siderúrgica Nac.", "GGBR4": "Gerdau", "USIM5": "Usiminas",
+    "JBSS3": "JBS", "MRFG3": "Marfrig", "BEEF3": "Minerva", "CMIG4": "Cemig",
+    "SBSP3": "Sabesp", "CPLE6": "Copel", "ENEV3": "Eneva", "EGIE3": "Engie",
+    "CCRO3": "Grupo CCR", "GOAU4": "Metalúrgica Gerdau", "KLBN11": "Klabin", "CYRE3": "Cyrela",
+    "MRVE3": "MRV", "EZTC3": "EZTEC", "LREN3": "Lojas Renner", "MGLU3": "Magazine Luiza",
+    "ASAI3": "Assaí", "CRFB3": "Carrefour", "NTCO3": "Natura", "TIMS3": "TIM",
+    "VIVT3": "Vivo", "HYPE3": "Hypera", "FLRY3": "Fleury", "TOTS3": "Totvs",
+    "CSAN3": "Cosan", "RAIZ4": "Raízen", "VBBR3": "Vibra Energia", "UGPA3": "Ultrapar",
+    "BRKM5": "Braskem", "CIEL3": "Cielo", "PSSA3": "Porto Seguro", "BBSE3": "BB Seguridade",
+    "CXSE3": "Caixa Seguridade", "MDIA3": "M. Dias Branco", "SMTO3": "São Martinho", "SLCE3": "SLC Agrícola",
+    "ALOS3": "Allos", "IGTI11": "Iguatemi", "MULT3": "Multiplan", "TAEE11": "Taesa",
+    "TRPL4": "ISA CTEEP", "SANB11": "Santander", "BPAC11": "BTG Pactual", "PRIO3": "Prio",
+    "RECV3": "PetroRecôncavo", "SOMA3": "Grupo Soma", "ARZZ3": "Arezzo", "CVCB3": "CVC",
+    "GOLL4": "Gol", "AZUL4": "Azul", "EMBR3": "Embraer", "POMO4": "Marcopolo"
 }
 
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 3600 # Salva os dados em memória por 1 hora para performance e segurança
+CACHE_TTL = 3600 # Salva os dados na memória por 1 hora (Alta velocidade)
 
 def obter_dados_base():
     global _CACHE
@@ -46,63 +47,95 @@ def obter_dados_base():
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    url_base = "https://www.fundamentus.com.br/resultado.php"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-    
-    # ROLETA DE PROXIES: Lemos o HTML cru. O código não trava se um proxy devolver Erro 502/403.
-    rotas = [
-        url_base, # 1. Tenta direto (caso o IP do Render esteja limpo)
-        f"https://api.allorigins.win/raw?url={url_base}", # 2. Proxy Raw (HTML puro, sem JSON)
-        f"https://api.codetabs.com/v1/proxy?quest={url_base}", # 3. Proxy Alternativo
-        f"https://corsproxy.io/?{url_base}" # 4. Proxy de Backup
-    ]
-    
+    url_alvo = "https://www.fundamentus.com.br/resultado.php"
     html_valido = None
     
-    for rota in rotas:
+    # --------------------------------------------------------------------------
+    # TRÍPLICE BLINDAGEM CONTRA FIREWALLS
+    # --------------------------------------------------------------------------
+    
+    # Estratégia 1: Cloudscraper (Simula um Google Chrome humano perfeitamente)
+    try:
+        scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
+        r = scraper.get(url_alvo, timeout=15)
+        r.encoding = 'ISO-8859-1'
+        if r.status_code == 200 and '<table' in r.text and 'Papel' in r.text:
+            html_valido = r.text
+    except Exception as e:
+        print(f"Rota 1 (Cloudscraper) falhou: {e}")
+
+    # Estratégia 2: Requests nativo com Headers Premium
+    if not html_valido:
         try:
-            r = requests.get(rota, headers=headers, timeout=12)
-            # VALIDAÇÃO CRÍTICA: Só aceitamos a resposta se contiver a estrutura da tabela
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'}
+            r = requests.get(url_alvo, headers=headers, timeout=15)
+            r.encoding = 'ISO-8859-1'
             if r.status_code == 200 and '<table' in r.text and 'Papel' in r.text:
                 html_valido = r.text
-                break # Achou a tabela! Sai da roleta.
-        except Exception:
-            continue # Se der timeout ou falhar, pula para a próxima rota sem travar o Python
+        except Exception as e:
+            print(f"Rota 2 (Requests) falhou: {e}")
 
-    # Se todas as rotas falharem, devolvemos vazio para o site exibir a mensagem padrão de erro, mas sem tela travada
+    # Estratégia 3: Proxy JSON com Tratamento de Erro (Evita o erro Expecting value)
+    if not html_valido:
+        try:
+            proxy_url = f"https://api.allorigins.win/get?url={url_alvo}"
+            r = requests.get(proxy_url, timeout=15)
+            if r.status_code == 200:
+                try:
+                    dados = r.json()
+                    html_proxy = dados.get('contents', '')
+                    if '<table' in html_proxy and 'Papel' in html_proxy:
+                        html_valido = html_proxy
+                except ValueError:
+                    pass # O Proxy devolveu um erro HTML, o código não quebra.
+        except Exception as e:
+            print(f"Rota 3 (Proxy) falhou: {e}")
+
+    # Se mesmo após as 3 rotas falhar, devolve vazio para não travar a tela
     if not html_valido:
         return pd.DataFrame()
+
+    # --------------------------------------------------------------------------
+    # PROCESSAMENTO DE DADOS 
+    # --------------------------------------------------------------------------
+    try:
+        tabelas = pd.read_html(io.StringIO(html_valido), thousands='.', decimal=',')
+        df = tabelas[0]
         
-    # Lendo o HTML com io.StringIO para garantir compatibilidade com Pandas e evitar Warnings
-    tabelas = pd.read_html(io.StringIO(html_valido), thousands='.', decimal=',')
-    df = tabelas[0]
-    
-    cols_percent = ['Div.Yield', 'Mrg Ebit', 'Mrg. Líq.', 'ROIC', 'ROE', 'Cresc. Rec.5a']
-    for col in cols_percent:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.replace('%', '', regex=False)
-            df[col] = pd.to_numeric(df[col], errors='coerce') / 100.0
+        # Filtra para ter apenas as ações validadas do nosso portfólio B3
+        df = df[df['Papel'].isin(NOMES_B3.keys())].copy()
+        
+        cols_percent = ['Div.Yield', 'Mrg Ebit', 'Mrg. Líq.', 'ROIC', 'ROE', 'Cresc. Rec.5a']
+        for col in cols_percent:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.replace('%', '', regex=False)
+                df[col] = pd.to_numeric(df[col], errors='coerce') / 100.0
 
-    df = df.rename(columns={
-        'Papel': 'ticker', 'Cotação': 'preco', 'Mrg. Líq.': 'margem',
-        'Liq.2meses': 'liquidez', 'Cresc. Rec.5a': 'crescimento', 'Div.Yield': 'dy',
-        'P/L': 'pl', 'P/VP': 'pvp', 'EV/EBIT': 'evebit', 'ROIC': 'roic', 'ROE': 'roe',
-        'Patrim. Líq': 'patrimonio', 'Dív.Líq/ Patrim.': 'divida_patrimonio'
-    })
+        df = df.rename(columns={
+            'Papel': 'ticker', 'Cotação': 'preco', 'Mrg. Líq.': 'margem',
+            'Liq.2meses': 'liquidez', 'Cresc. Rec.5a': 'crescimento', 'Div.Yield': 'dy',
+            'P/L': 'pl', 'P/VP': 'pvp', 'EV/EBIT': 'evebit', 'ROIC': 'roic', 'ROE': 'roe',
+            'Patrim. Líq': 'patrimonio', 'Dív.Líq/ Patrim.': 'divida_patrimonio'
+        })
 
-    for col in ['pl', 'pvp', 'evebit', 'patrimonio', 'divida_patrimonio', 'preco', 'liquidez']:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce')
-    
-    df['lpa'] = df.apply(lambda r: r['preco'] / r['pl'] if pd.notnull(r['pl']) and r['pl'] > 0 else 0, axis=1)
-    df['vpa'] = df.apply(lambda r: r['preco'] / r['pvp'] if pd.notnull(r['pvp']) and r['pvp'] > 0 else 0, axis=1)
-    
-    df['logo'] = df['ticker'].apply(lambda x: f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{str(x)[:4]}.png")
-    df['nome'] = df['ticker'].apply(lambda t: NOMES_B3.get(t[:4], f"Companhia {t[:4]} S.A."))
-    
-    _CACHE["df"] = df
-    _CACHE["updated_at"] = agora
-    return df.copy()
+        for col in ['pl', 'pvp', 'evebit', 'patrimonio', 'divida_patrimonio', 'preco', 'liquidez']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce')
+        
+        # Criação de LPA e VPA com segurança (Evita divisão por zero)
+        df['lpa'] = df.apply(lambda r: r['preco'] / r['pl'] if pd.notnull(r['pl']) and r['pl'] != 0 else 0, axis=1)
+        df['vpa'] = df.apply(lambda r: r['preco'] / r['pvp'] if pd.notnull(r['pvp']) and r['pvp'] != 0 else 0, axis=1)
+        
+        df['logo'] = df['ticker'].apply(lambda x: f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{str(x)[:4]}.png")
+        df['nome'] = df['ticker'].apply(lambda t: NOMES_B3.get(t, f"Companhia {t} S.A."))
+        
+        _CACHE["df"] = df
+        _CACHE["updated_at"] = agora
+        return df.copy()
+        
+    except Exception as e:
+        print(f"Erro no processamento do Pandas: {e}")
+        return pd.DataFrame()
 
 @app.route('/api/tickers', methods=['GET'])
 def get_tickers():
@@ -200,7 +233,7 @@ def get_analise_completa():
     chart_data = None
 
     try:
-        # AQUI O YAHOO FINANCE ESTÁ SEGURO POIS SÓ BAIXAMOS 1 ATIVO POR VEZ (Não dá Timeout nem Erro 429)
+        # AQUI É SEGURO: A requisição de UM ÚNICO ATIVO não aciona o Error 429 do Yahoo.
         df_yf = yf.download(ticker_input + '.SA', period=p_map.get(periodo_solicitado, "1y"), progress=False, ignore_tz=True)
         if not df_yf.empty:
             if isinstance(df_yf.columns, pd.MultiIndex):
