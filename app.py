@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import pandas as pd
 import numpy as np
+import requests
 import yfinance as yf
 import warnings
 import time
@@ -12,21 +13,30 @@ app = Flask(__name__)
 CORS(app)
 
 # ==============================================================================
-# BASE DE ATIVOS B3 (30 Ações Mais Líquidas para Amostragem Segura)
+# BASE DE ATIVOS B3 PREMIUM
 # ==============================================================================
 NOMES_B3 = {
     "PETR4": "Petrobras", "VALE3": "Vale S.A.", "ITUB4": "Itaú Unibanco", "BBDC4": "Banco Bradesco",
     "BBAS3": "Banco do Brasil", "ABEV3": "Ambev S.A.", "WEGE3": "WEG Equipamentos", "ELET3": "Eletrobras",
     "RENT3": "Localiza", "B3SA3": "B3", "SUZB3": "Suzano", "RDOR3": "Rede D'Or",
     "RADL3": "Raia Drogasil", "CSNA3": "Siderúrgica Nac.", "GGBR4": "Gerdau", "USIM5": "Usiminas",
-    "JBSS3": "JBS", "CMIG4": "Cemig", "SBSP3": "Sabesp", "CPLE6": "Copel",
-    "ENEV3": "Eneva", "EGIE3": "Engie", "CCRO3": "Grupo CCR", "LREN3": "Lojas Renner",
-    "MGLU3": "Magazine Luiza", "ASAI3": "Assaí", "CRFB3": "Carrefour", "NTCO3": "Natura",
-    "TIMS3": "TIM", "VIVT3": "Vivo"
+    "JBSS3": "JBS", "MRFG3": "Marfrig", "BEEF3": "Minerva", "CMIG4": "Cemig",
+    "SBSP3": "Sabesp", "CPLE6": "Copel", "ENEV3": "Eneva", "EGIE3": "Engie",
+    "CCRO3": "Grupo CCR", "GOAU4": "Metalúrgica Gerdau", "KLBN11": "Klabin", "CYRE3": "Cyrela",
+    "MRVE3": "MRV", "EZTC3": "EZTEC", "LREN3": "Lojas Renner", "MGLU3": "Magazine Luiza",
+    "ASAI3": "Assaí", "CRFB3": "Carrefour", "NTCO3": "Natura", "TIMS3": "TIM",
+    "VIVT3": "Vivo", "HYPE3": "Hypera", "FLRY3": "Fleury", "TOTS3": "Totvs",
+    "CSAN3": "Cosan", "RAIZ4": "Raízen", "VBBR3": "Vibra Energia", "UGPA3": "Ultrapar",
+    "BRKM5": "Braskem", "CIEL3": "Cielo", "PSSA3": "Porto Seguro", "BBSE3": "BB Seguridade",
+    "CXSE3": "Caixa Seguridade", "MDIA3": "M. Dias Branco", "SMTO3": "São Martinho", "SLCE3": "SLC Agrícola",
+    "ALOS3": "Allos", "IGTI11": "Iguatemi", "MULT3": "Multiplan", "TAEE11": "Taesa",
+    "TRPL4": "ISA CTEEP", "SANB11": "Santander", "BPAC11": "BTG Pactual", "PRIO3": "Prio",
+    "RECV3": "PetroRecôncavo", "SOMA3": "Grupo Soma", "ARZZ3": "Arezzo", "CVCB3": "CVC",
+    "GOLL4": "Gol", "AZUL4": "Azul", "EMBR3": "Embraer", "POMO4": "Marcopolo"
 }
 
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 3600 # Cache de 1 hora
+CACHE_TTL = 3600 # Salva na memória do servidor por 1 hora
 
 def obter_dados_base():
     global _CACHE
@@ -35,75 +45,61 @@ def obter_dados_base():
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    tickers_sa = [f"{t}.SA" for t in NOMES_B3.keys()]
+    df = pd.DataFrame()
+    url_alvo = "https://www.fundamentus.com.br/resultado.php"
+    
+    # PULO DO GATO ARQUITETURAL: Usamos o endpoint /get para receber um JSON blindado.
+    # Isso impede que o WAF e erros de acentuação quebrem a tabela no Pandas.
+    proxy_url = f"https://api.allorigins.win/get?url={url_alvo}"
     
     try:
-        # PULO DO GATO: Download em LOTE do Yahoo Finance (Uma única conexão, sem Rate Limit)
-        df_historico = yf.download(tickers_sa, period="1y", group_by='ticker', progress=False, ignore_tz=True)
+        r = requests.get(proxy_url, timeout=15)
+        # Extrai o HTML cru de dentro do envelope JSON seguro
+        html_content = r.json().get('contents', '')
         
-        resultados = []
-        
-        for t_sa in tickers_sa:
-            ticker_br = t_sa.replace('.SA', '')
-            
-            try:
-                # Verifica se o Ticker retornou dados válidos
-                if t_sa in df_historico.columns.get_level_values(0):
-                    dados_ativo = df_historico[t_sa].dropna(subset=['Close'])
-                else:
-                    dados_ativo = df_historico.dropna(subset=['Close']) # Fallback se for single index
-                    
-                if dados_ativo.empty: continue
-                
-                preco_atual = float(dados_ativo['Close'].iloc[-1])
-                volume_medio = float(dados_ativo['Volume'].mean())
-                liquidez = preco_atual * volume_medio
-                
-                # Buscando os múltiplos (Tenta buscar via yf.Ticker com timeout)
-                ativo_yf = yf.Ticker(t_sa)
-                info = ativo_yf.info
-                
-                resultados.append({
-                    'ticker': ticker_br,
-                    'nome': NOMES_B3.get(ticker_br, f"Cia {ticker_br}"),
-                    'logo': f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker_br[:4]}.png",
-                    'preco': preco_atual,
-                    'pl': float(info.get('trailingPE') or 15.0), # Valores padrão seguros se a API ocultar
-                    'pvp': float(info.get('priceToBook') or 1.5),
-                    'lpa': float(info.get('trailingEps') or (preco_atual / 15.0)),
-                    'vpa': float(info.get('bookValue') or (preco_atual / 1.5)),
-                    'dy': float(info.get('dividendYield') or 0.05),
-                    'roic': float(info.get('returnOnAssets') or 0.10), 
-                    'roe': float(info.get('returnOnEquity') or 0.15),
-                    'margem': float(info.get('profitMargins') or 0.10),
-                    'evebit': float(info.get('enterpriseToEbitda') or 10.0),
-                    'crescimento': float(info.get('revenueGrowth') or 0.05),
-                    'liquidez': liquidez,
-                    'patrimonio': float(info.get('totalAssets', 1000000000)),
-                    'divida_patrimonio': float(info.get('debtToEquity', 50) / 100.0)
-                })
-                # Pequeno respiro para a API de info
-                time.sleep(0.1)
-                
-            except Exception as e:
-                print(f"Erro ao processar {ticker_br}: {e}")
-                continue
-                
-        df = pd.DataFrame(resultados)
-        
-        # Blindagem contra DataFrames vazios
-        if df.empty:
-            return pd.DataFrame()
-            
-        df = df.fillna(0)
-        
-        _CACHE["df"] = df
-        _CACHE["updated_at"] = agora
-        return df.copy()
-        
+        tabelas = pd.read_html(html_content, thousands='.', decimal=',')
+        if tabelas and len(tabelas) > 0:
+            df_temp = tabelas[0]
+            # Validação de integridade
+            if 'Papel' in df_temp.columns and 'Mrg. Líq.' in df_temp.columns:
+                df = df_temp
     except Exception as e:
-        print(f"Erro massivo no Yahoo Finance: {e}")
+        print(f"Erro na extração em lote: {e}")
         return pd.DataFrame()
+
+    if df.empty:
+        return df
+        
+    # Mantém apenas as ações da nossa lista limpa
+    df = df[df['Papel'].isin(NOMES_B3.keys())].copy()
+    
+    cols_percent = ['Div.Yield', 'Mrg Ebit', 'Mrg. Líq.', 'ROIC', 'ROE', 'Cresc. Rec.5a']
+    for col in cols_percent:
+        if col in df:
+            df[col] = df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.replace('%', '', regex=False)
+            df[col] = pd.to_numeric(df[col], errors='coerce') / 100.0
+
+    df = df.rename(columns={
+        'Papel': 'ticker', 'Cotação': 'preco', 'Mrg. Líq.': 'margem',
+        'Liq.2meses': 'liquidez', 'Cresc. Rec.5a': 'crescimento', 'Div.Yield': 'dy',
+        'P/L': 'pl', 'P/VP': 'pvp', 'EV/EBIT': 'evebit', 'ROIC': 'roic', 'ROE': 'roe',
+        'Patrim. Líq': 'patrimonio', 'Dív.Líq/ Patrim.': 'divida_patrimonio'
+    })
+
+    for col in ['pl', 'pvp', 'evebit', 'patrimonio', 'divida_patrimonio', 'preco', 'liquidez']:
+        if col in df:
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce')
+    
+    # Prevenção de divisão por zero (Matemática segura)
+    df['lpa'] = df.apply(lambda r: r['preco'] / r['pl'] if pd.notnull(r['pl']) and r['pl'] != 0 else 0, axis=1)
+    df['vpa'] = df.apply(lambda r: r['preco'] / r['pvp'] if pd.notnull(r['pvp']) and r['pvp'] != 0 else 0, axis=1)
+    
+    df['logo'] = df['ticker'].apply(lambda x: f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{str(x)[:4]}.png")
+    df['nome'] = df['ticker'].apply(lambda t: NOMES_B3.get(t, f"Companhia {t} S.A."))
+    
+    _CACHE["df"] = df
+    _CACHE["updated_at"] = agora
+    return df.copy()
 
 @app.route('/api/tickers', methods=['GET'])
 def get_tickers():
@@ -185,7 +181,7 @@ def get_analise_completa():
     item = empresa_data.iloc[0].replace([np.inf, -np.inf], np.nan).fillna(0)
     
     site_ri = f"https://www.google.com/search?q=RI+Relações+com+Investidores+{item['nome']}"
-    link_relatorio = f"https://br.financas.yahoo.com/quote/{ticker_input}.SA/key-statistics"
+    link_relatorio = f"https://www.fundamentus.com.br/detalhes.php?papel={ticker_input}"
 
     fundamentos_dict = {
         "preco": float(item['preco']), "pl": float(item['pl']), "pvp": float(item['pvp']),
@@ -201,6 +197,7 @@ def get_analise_completa():
     chart_data = None
 
     try:
+        # AQUI O YAHOO FINANCE ESTÁ SEGURO POIS SÓ BAIXAMOS 1 ATIVO POR VEZ (Não dá Timeout nem Erro 429)
         df_yf = yf.download(ticker_input + '.SA', period=p_map.get(periodo_solicitado, "1y"), progress=False, ignore_tz=True)
         if not df_yf.empty:
             if isinstance(df_yf.columns, pd.MultiIndex):
