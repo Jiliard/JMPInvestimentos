@@ -3,98 +3,76 @@ from flask_cors import CORS
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import cloudscraper
 import warnings
 import time
-import random
-import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 warnings.filterwarnings("ignore")
 
 app = Flask(__name__)
 CORS(app)
 
-# ==============================================================================
-# BASE DE ATIVOS B3 (Top 30 mais líquidas do IBOVESPA para evitar Timeout/Bloqueio)
-# ==============================================================================
-NOMES_B3 = {
-    "PETR4": "Petrobras", "VALE3": "Vale S.A.", "ITUB4": "Itaú Unibanco", "BBDC4": "Banco Bradesco",
-    "BBAS3": "Banco do Brasil", "ABEV3": "Ambev S.A.", "WEGE3": "WEG Equipamentos", "ELET3": "Eletrobras",
-    "RENT3": "Localiza", "B3SA3": "B3", "SUZB3": "Suzano", "RDOR3": "Rede D'Or",
-    "RADL3": "Raia Drogasil", "CSNA3": "Siderúrgica Nac.", "GGBR4": "Gerdau", "USIM5": "Usiminas",
-    "JBSS3": "JBS", "CMIG4": "Cemig", "SBSP3": "Sabesp", "CPLE6": "Copel",
-    "ENEV3": "Eneva", "EGIE3": "Engie", "CCRO3": "Grupo CCR", "LREN3": "Lojas Renner",
-    "MGLU3": "Magazine Luiza", "ASAI3": "Assaí", "CRFB3": "Carrefour", "NTCO3": "Natura",
-    "TIMS3": "TIM", "VIVT3": "Vivo"
-}
-
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 3600 # Salva os dados em memória por 1 hora (alivia a API do Yahoo)
+CACHE_TTL = 1800 # Salva os dados em memória por 30 minutos para evitar novos bloqueios
 
 def obter_dados_base():
     global _CACHE
     agora = time.time()
     
+    # Se os dados já foram baixados há menos de 30 minutos, devolve instantaneamente
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    resultados = []
-    tickers = list(NOMES_B3.keys())
+    # Endpoint JSON Oficial e Rápido do StatusInvest (1 requisição = Todas as ações)
+    url = 'https://statusinvest.com.br/category/advancedsearchresult?search=%7B%22Sector%22%3A%22%22%2C%22SubSector%22%3A%22%22%2C%22Segment%22%3A%22%22%2C%22my_range%22%3A%22-20%3B100%22%2C%22CompanySize%22%3A%22%22%2C%22MinPE%22%3A%22%22%2C%22MaxPE%22%3A%22%22%2C%22MinPVP%22%3A%22%22%2C%22MaxPVP%22%3A%22%22%2C%22MinDividendYield%22%3A%22%22%2C%22MaxDividendYield%22%3A%22%22%2C%22MinMarketCap%22%3A%22%22%2C%22MaxMarketCap%22%3A%22%22%7D&CategoryType=1'
     
-    # 1. Criação de Sessão Persistente (Imitando um navegador)
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    })
-    
-    def extrair_dados_yahoo(ticker):
-        # 2. Jitter: Atraso aleatório para evitar Erro 429 (Muitas Requisições)
-        time.sleep(random.uniform(0.5, 1.5))
-        try:
-            ativo = yf.Ticker(f"{ticker}.SA", session=session)
-            info = ativo.info
-            
-            preco = info.get('currentPrice') or info.get('previousClose')
-            if not preco: return None
-                
-            return {
-                'ticker': ticker,
-                'nome': NOMES_B3.get(ticker, f"Cia {ticker}"),
-                'logo': f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png",
-                'preco': float(preco),
-                'pl': float(info.get('trailingPE') or 0),
-                'pvp': float(info.get('priceToBook') or 0),
-                'lpa': float(info.get('trailingEps') or 0),
-                'vpa': float(info.get('bookValue') or 0),
-                'dy': float(info.get('dividendYield') or 0),
-                'roic': float(info.get('returnOnAssets') or 0), 
-                'roe': float(info.get('returnOnEquity') or 0),
-                'margem': float(info.get('profitMargins') or 0),
-                'evebit': float(info.get('enterpriseToEbitda') or 0),
-                'crescimento': float(info.get('revenueGrowth') or 0),
-                'liquidez': float(info.get('volume') or 0) * float(preco)
-            }
-        except Exception:
-            return None
-
-    # 3. Paralelismo Suave (3 processos por vez, não mais 20)
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(extrair_dados_yahoo, t): t for t in tickers}
-        for future in as_completed(futures):
-            dado = future.result()
-            if dado:
-                resultados.append(dado)
-                
-    df = pd.DataFrame(resultados)
-    
-    if df.empty:
-        return df
+    try:
+        # Imita a assinatura de um navegador real para passar livre por firewalls
+        scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36', 'Accept': 'application/json'}
         
-    df = df.fillna(0)
-    
-    _CACHE["df"] = df
-    _CACHE["updated_at"] = agora
-    return df.copy()
+        r = scraper.get(url, headers=headers, timeout=20)
+        lista_acoes = r.json()
+        
+        df = pd.DataFrame(lista_acoes)
+        
+        # Traduzindo as colunas vindas do StatusInvest para o padrão do nosso app
+        df = df.rename(columns={
+            'price': 'preco',
+            'p_L': 'pl',
+            'p_VP': 'pvp',
+            'margemLiquida': 'margem',
+            'liquidezMediaDiaria': 'liquidez',
+            'receitas_Cagr5': 'crescimento',
+            'eV_Ebit': 'evebit',
+            'patrimonioLiquido': 'patrimonio',
+            'dividaLiquidaPatrimonio': 'divida_patrimonio'
+        })
+        
+        # Normalizando percentuais (A API devolve 5.0 para representar 5%)
+        cols_percent = ['dy', 'roic', 'roe', 'margem', 'crescimento']
+        for col in cols_percent:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce') / 100.0
+                
+        # Tratando as colunas numéricas comuns
+        for col in ['pl', 'pvp', 'evebit', 'patrimonio', 'divida_patrimonio', 'lpa', 'vpa', 'preco', 'liquidez']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                
+        # Links visuais e Nomes
+        df['logo'] = df['ticker'].apply(lambda x: f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{str(x)[:4]}.png")
+        df['nome'] = df.get('companyName', df['ticker'])
+        
+        df = df.fillna(0)
+        
+        _CACHE["df"] = df
+        _CACHE["updated_at"] = agora
+        return df.copy()
+        
+    except Exception as e:
+        print(f"Erro ao buscar StatusInvest via API: {e}")
+        return pd.DataFrame()
 
 @app.route('/api/tickers', methods=['GET'])
 def get_tickers():
@@ -109,7 +87,6 @@ def get_rankings():
     if df.empty: return jsonify([])
 
     metodo = request.args.get('metodo', 'graham')
-    
     liq_min = float(request.args.get('liq_min', 100000))
     pl_max = float(request.args.get('pl_max', 30))
     pvp_max = float(request.args.get('pvp_max', 3))
@@ -177,7 +154,7 @@ def get_analise_completa():
     item = empresa_data.iloc[0].replace([np.inf, -np.inf], np.nan).fillna(0)
     
     site_ri = f"https://www.google.com/search?q=RI+Relações+com+Investidores+{item['nome']}"
-    link_relatorio = f"https://br.financas.yahoo.com/quote/{ticker_input}.SA/key-statistics"
+    link_relatorio = f"https://statusinvest.com.br/acoes/{ticker_input}"
 
     fundamentos_dict = {
         "preco": float(item['preco']), "pl": float(item['pl']), "pvp": float(item['pvp']),
@@ -192,6 +169,7 @@ def get_analise_completa():
     p_map = {"30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"}
     chart_data = None
 
+    # O gráfico continua vindo do Yahoo Finance porque ele não sofre com Rate Limit se buscar apenas 1 ativo por vez
     try:
         df_yf = yf.download(ticker_input + '.SA', period=p_map.get(periodo_solicitado, "1y"), progress=False, ignore_tz=True)
         if not df_yf.empty:
