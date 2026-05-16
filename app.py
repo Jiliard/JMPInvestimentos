@@ -4,10 +4,8 @@ import pandas as pd
 import numpy as np
 import requests
 import yfinance as yf
-import cloudscraper
 import warnings
 import time
-import io
 
 warnings.filterwarnings("ignore")
 
@@ -15,7 +13,7 @@ app = Flask(__name__)
 CORS(app)
 
 # ==============================================================================
-# BASE DE ATIVOS B3 (Nomes oficiais para cruzamento)
+# BASE DE ATIVOS B3 PARA FILTRO E CRUZAMENTO
 # ==============================================================================
 NOMES_B3 = {
     "PETR4": "Petrobras", "VALE3": "Vale S.A.", "ITUB4": "Itaú Unibanco", "BBDC4": "Banco Bradesco",
@@ -38,7 +36,7 @@ NOMES_B3 = {
 }
 
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 3600 # Salva os dados na memória por 1 hora (Alta velocidade)
+CACHE_TTL = 1800 # Salva os dados na memória por 30 minutos
 
 def obter_dados_base():
     global _CACHE
@@ -47,95 +45,93 @@ def obter_dados_base():
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    url_alvo = "https://www.fundamentus.com.br/resultado.php"
-    html_valido = None
+    # PULO DO GATO ARQUITETURAL: API do TradingView Scanner (Sem Cloudflare, Sem 429)
+    url = "https://scanner.tradingview.com/brazil/scan"
     
-    # --------------------------------------------------------------------------
-    # TRÍPLICE BLINDAGEM CONTRA FIREWALLS
-    # --------------------------------------------------------------------------
+    # Solicitamos todas as colunas financeiras de uma só vez para o Brasil
+    payload = {
+        "markets": ["brazil"],
+        "symbols": {"query": {"types": ["stock"]}},
+        "columns": [
+            "name", "close", "average_volume_10d_calc", "price_earnings_ttm", 
+            "price_book_ratio", "dividend_yield_recent", "return_on_equity", 
+            "return_on_invested_capital", "net_margin", "revenue_growth_yoy", 
+            "enterprise_value_ebitda_ttm", "earnings_per_share_basic_ttm",
+            "total_equity", "debt_to_equity"
+        ],
+        "sort": {"sortBy": "average_volume_10d_calc", "sortOrder": "desc"},
+        "range": [0, 200]
+    }
     
-    # Estratégia 1: Cloudscraper (Simula um Google Chrome humano perfeitamente)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Content-Type': 'application/json'
+    }
+    
     try:
-        scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
-        r = scraper.get(url_alvo, timeout=15)
-        r.encoding = 'ISO-8859-1'
-        if r.status_code == 200 and '<table' in r.text and 'Papel' in r.text:
-            html_valido = r.text
+        r = requests.post(url, json=payload, headers=headers, timeout=10)
+        r.raise_for_status()
+        dados = r.json()
+        
+        resultados = []
+        for item in dados.get("data", []):
+            val = item.get("d", [])
+            if not val or len(val) < 12:
+                continue
+                
+            ticker = val[0]
+            if ticker not in NOMES_B3:
+                continue
+                
+            # Extração segura e blindada contra valores nulos (null) do JSON
+            preco = float(val[1]) if val[1] is not None else 0.0
+            liquidez = float(val[2]) * preco if val[2] is not None else 0.0
+            pl = float(val[3]) if val[3] is not None else 0.0
+            pvp = float(val[4]) if val[4] is not None else 0.0
+            dy = float(val[5]) / 100.0 if val[5] is not None else 0.0
+            roe = float(val[6]) / 100.0 if val[6] is not None else 0.0
+            roic = float(val[7]) / 100.0 if val[7] is not None else 0.0
+            margem = float(val[8]) / 100.0 if val[8] is not None else 0.0
+            crescimento = float(val[9]) / 100.0 if val[9] is not None else 0.0
+            evebit = float(val[10]) if val[10] is not None else 0.0
+            lpa = float(val[11]) if val[11] is not None else 0.0
+            
+            patrimonio = float(val[12]) if len(val) > 12 and val[12] is not None else 0.0
+            divida_patrimonio = float(val[13]) / 100.0 if len(val) > 13 and val[13] is not None else 0.0
+            
+            # Recalcula o VPA (Valor Patrimonial) baseado no P/VP recebido
+            vpa = preco / pvp if pvp > 0 else 0.0
+            
+            resultados.append({
+                'ticker': ticker,
+                'nome': NOMES_B3.get(ticker, f"Cia {ticker}"),
+                'logo': f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png",
+                'preco': preco,
+                'pl': pl,
+                'pvp': pvp,
+                'lpa': lpa,
+                'vpa': vpa,
+                'dy': dy,
+                'roic': roic,
+                'roe': roe,
+                'margem': margem,
+                'evebit': evebit,
+                'crescimento': crescimento,
+                'liquidez': liquidez,
+                'patrimonio': patrimonio,
+                'divida_patrimonio': divida_patrimonio
+            })
+            
+        df = pd.DataFrame(resultados)
+        if not df.empty:
+            _CACHE["df"] = df
+            _CACHE["updated_at"] = agora
+            return df.copy()
+            
     except Exception as e:
-        print(f"Rota 1 (Cloudscraper) falhou: {e}")
-
-    # Estratégia 2: Requests nativo com Headers Premium
-    if not html_valido:
-        try:
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'}
-            r = requests.get(url_alvo, headers=headers, timeout=15)
-            r.encoding = 'ISO-8859-1'
-            if r.status_code == 200 and '<table' in r.text and 'Papel' in r.text:
-                html_valido = r.text
-        except Exception as e:
-            print(f"Rota 2 (Requests) falhou: {e}")
-
-    # Estratégia 3: Proxy JSON com Tratamento de Erro (Evita o erro Expecting value)
-    if not html_valido:
-        try:
-            proxy_url = f"https://api.allorigins.win/get?url={url_alvo}"
-            r = requests.get(proxy_url, timeout=15)
-            if r.status_code == 200:
-                try:
-                    dados = r.json()
-                    html_proxy = dados.get('contents', '')
-                    if '<table' in html_proxy and 'Papel' in html_proxy:
-                        html_valido = html_proxy
-                except ValueError:
-                    pass # O Proxy devolveu um erro HTML, o código não quebra.
-        except Exception as e:
-            print(f"Rota 3 (Proxy) falhou: {e}")
-
-    # Se mesmo após as 3 rotas falhar, devolve vazio para não travar a tela
-    if not html_valido:
-        return pd.DataFrame()
-
-    # --------------------------------------------------------------------------
-    # PROCESSAMENTO DE DADOS 
-    # --------------------------------------------------------------------------
-    try:
-        tabelas = pd.read_html(io.StringIO(html_valido), thousands='.', decimal=',')
-        df = tabelas[0]
+        print(f"Erro ao buscar na API do TradingView: {e}")
         
-        # Filtra para ter apenas as ações validadas do nosso portfólio B3
-        df = df[df['Papel'].isin(NOMES_B3.keys())].copy()
-        
-        cols_percent = ['Div.Yield', 'Mrg Ebit', 'Mrg. Líq.', 'ROIC', 'ROE', 'Cresc. Rec.5a']
-        for col in cols_percent:
-            if col in df.columns:
-                df[col] = df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.replace('%', '', regex=False)
-                df[col] = pd.to_numeric(df[col], errors='coerce') / 100.0
-
-        df = df.rename(columns={
-            'Papel': 'ticker', 'Cotação': 'preco', 'Mrg. Líq.': 'margem',
-            'Liq.2meses': 'liquidez', 'Cresc. Rec.5a': 'crescimento', 'Div.Yield': 'dy',
-            'P/L': 'pl', 'P/VP': 'pvp', 'EV/EBIT': 'evebit', 'ROIC': 'roic', 'ROE': 'roe',
-            'Patrim. Líq': 'patrimonio', 'Dív.Líq/ Patrim.': 'divida_patrimonio'
-        })
-
-        for col in ['pl', 'pvp', 'evebit', 'patrimonio', 'divida_patrimonio', 'preco', 'liquidez']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce')
-        
-        # Criação de LPA e VPA com segurança (Evita divisão por zero)
-        df['lpa'] = df.apply(lambda r: r['preco'] / r['pl'] if pd.notnull(r['pl']) and r['pl'] != 0 else 0, axis=1)
-        df['vpa'] = df.apply(lambda r: r['preco'] / r['pvp'] if pd.notnull(r['pvp']) and r['pvp'] != 0 else 0, axis=1)
-        
-        df['logo'] = df['ticker'].apply(lambda x: f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{str(x)[:4]}.png")
-        df['nome'] = df['ticker'].apply(lambda t: NOMES_B3.get(t, f"Companhia {t} S.A."))
-        
-        _CACHE["df"] = df
-        _CACHE["updated_at"] = agora
-        return df.copy()
-        
-    except Exception as e:
-        print(f"Erro no processamento do Pandas: {e}")
-        return pd.DataFrame()
+    return pd.DataFrame()
 
 @app.route('/api/tickers', methods=['GET'])
 def get_tickers():
@@ -217,7 +213,7 @@ def get_analise_completa():
     item = empresa_data.iloc[0].replace([np.inf, -np.inf], np.nan).fillna(0)
     
     site_ri = f"https://www.google.com/search?q=RI+Relações+com+Investidores+{item['nome']}"
-    link_relatorio = f"https://www.fundamentus.com.br/detalhes.php?papel={ticker_input}"
+    link_relatorio = f"https://br.tradingview.com/symbols/BMFBOVESPA-{ticker_input}/financials-overview/"
 
     fundamentos_dict = {
         "preco": float(item['preco']), "pl": float(item['pl']), "pvp": float(item['pvp']),
@@ -233,7 +229,7 @@ def get_analise_completa():
     chart_data = None
 
     try:
-        # AQUI É SEGURO: A requisição de UM ÚNICO ATIVO não aciona o Error 429 do Yahoo.
+        # AQUI O YAHOO FINANCE É SEGURO, pois busca histórico de 1 única ação por vez (não aciona o Rate Limit)
         df_yf = yf.download(ticker_input + '.SA', period=p_map.get(periodo_solicitado, "1y"), progress=False, ignore_tz=True)
         if not df_yf.empty:
             if isinstance(df_yf.columns, pd.MultiIndex):
