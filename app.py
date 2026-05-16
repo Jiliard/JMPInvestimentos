@@ -2,89 +2,96 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import pandas as pd
 import numpy as np
-import requests
 import yfinance as yf
-import cloudscraper # <--- NOVA BIBLIOTECA AQUI
 import warnings
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 warnings.filterwarnings("ignore")
 
 app = Flask(__name__)
 CORS(app)
 
+# ==============================================================================
+# BASE DE ATIVOS B3 PARA BUSCA CONCORRENTE
+# ==============================================================================
 NOMES_B3 = {
-    "PETR": "Petrobras", "VALE": "Vale S.A.", "ITUB": "Itaú Unibanco", "BBDC": "Banco Bradesco",
-    "BBAS": "Banco do Brasil", "ABEV": "Ambev S.A.", "WEGE": "WEG Equipamentos", "ELET": "Eletrobras",
-    "RENT": "Localiza Rent a Car", "B3SA": "B3 Bolsa e Balcão", "SUZB": "Suzano Papel", "RDOR": "Rede D'Or São Luiz",
-    "RADL": "Raia Drogasil", "CSNA": "Siderúrgica Nacional", "GGBR": "Gerdau S.A.", "USIM": "Usiminas",
-    "JBSS": "JBS Alimentos", "MRFG": "Marfrig Global", "BEEF": "Minerva Foods", "CMIG": "Cemig Energia",
-    "SBSP": "Sabesp Saneamento", "CPLE": "Copel Energia", "ENEV": "Eneva Geração", "EGIE": "Engie Brasil",
-    "CCRO": "Grupo CCR"
+    "PETR4": "Petrobras", "VALE3": "Vale S.A.", "ITUB4": "Itaú Unibanco", "BBDC4": "Banco Bradesco",
+    "BBAS3": "Banco do Brasil", "ABEV3": "Ambev S.A.", "WEGE3": "WEG Equipamentos", "ELET3": "Eletrobras",
+    "RENT3": "Localiza", "B3SA3": "B3", "SUZB3": "Suzano", "RDOR3": "Rede D'Or",
+    "RADL3": "Raia Drogasil", "CSNA3": "Siderúrgica Nac.", "GGBR4": "Gerdau", "USIM5": "Usiminas",
+    "JBSS3": "JBS", "MRFG3": "Marfrig", "BEEF3": "Minerva", "CMIG4": "Cemig",
+    "SBSP3": "Sabesp", "CPLE6": "Copel", "ENEV3": "Eneva", "EGIE3": "Engie",
+    "CCRO3": "Grupo CCR", "GOAU4": "Metalúrgica Gerdau", "KLBN11": "Klabin", "CYRE3": "Cyrela",
+    "MRVE3": "MRV", "EZTC3": "EZTEC", "LREN3": "Lojas Renner", "MGLU3": "Magazine Luiza",
+    "ASAI3": "Assaí", "CRFB3": "Carrefour", "NTCO3": "Natura", "TIMS3": "TIM",
+    "VIVT3": "Vivo", "HYPE3": "Hypera", "FLRY3": "Fleury", "TOTS3": "Totvs",
+    "CSAN3": "Cosan", "RAIZ4": "Raízen", "VBBR3": "Vibra Energia", "UGPA3": "Ultrapar",
+    "BRKM5": "Braskem", "CIEL3": "Cielo", "PSSA3": "Porto Seguro", "BBSE3": "BB Seguridade",
+    "CXSE3": "Caixa Seguridade", "MDIA3": "M. Dias Branco", "SMTO3": "São Martinho", "SLCE3": "SLC Agrícola",
+    "ALOS3": "Allos", "IGTI11": "Iguatemi", "MULT3": "Multiplan", "TAEE11": "Taesa",
+    "TRPL4": "ISA CTEEP", "SANB11": "Santander", "BPAC11": "BTG Pactual", "PRIO3": "Prio",
+    "RECV3": "PetroRecôncavo", "SOMA3": "Grupo Soma", "ARZZ3": "Arezzo", "CVCB3": "CVC",
+    "GOLL4": "Gol", "AZUL4": "Azul", "EMBR3": "Embraer", "POMO4": "Marcopolo"
 }
 
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 300 
+CACHE_TTL = 3600 # Cache de 1 hora para alta performance
+
+# FUNÇÃO EXECUTADA PELAS THREADS
+def extrair_dados_yahoo(ticker):
+    try:
+        ativo = yf.Ticker(f"{ticker}.SA")
+        info = ativo.info
+        
+        preco = info.get('currentPrice') or info.get('previousClose')
+        if not preco: return None
+            
+        return {
+            'ticker': ticker,
+            'nome': NOMES_B3.get(ticker, f"Cia {ticker}"),
+            'logo': f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png",
+            'preco': float(preco),
+            'pl': float(info.get('trailingPE') or 0),
+            'pvp': float(info.get('priceToBook') or 0),
+            'lpa': float(info.get('trailingEps') or 0),
+            'vpa': float(info.get('bookValue') or 0),
+            'dy': float(info.get('dividendYield') or 0),
+            'roic': float(info.get('returnOnAssets') or 0), 
+            'roe': float(info.get('returnOnEquity') or 0),
+            'margem': float(info.get('profitMargins') or 0),
+            'evebit': float(info.get('enterpriseToEbitda') or 0),
+            'crescimento': float(info.get('revenueGrowth') or 0),
+            'liquidez': float(info.get('volume') or 0) * float(preco)
+        }
+    except Exception:
+        return None
 
 def obter_dados_base():
     global _CACHE
     agora = time.time()
     
+    # Se os dados já foram baixados na última hora, usa a memória (Ultra rápido)
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    url = 'https://www.fundamentus.com.br/resultado.php'
-    df = pd.DataFrame()
+    resultados = []
+    tickers = list(NOMES_B3.keys())
     
-    try:
-        # PULO DO GATO: O Cloudscraper imita um Chrome real no Windows para passar pelo firewall
-        scraper = cloudscraper.create_scraper(browser={
-            'browser': 'chrome',
-            'platform': 'windows',
-            'desktop': True
-        })
-        
-        r = scraper.get(url, timeout=15)
-        r.encoding = 'ISO-8859-1'
-        
-        tabelas = pd.read_html(r.text, thousands='.', decimal=',')
-        
-        if tabelas and len(tabelas) > 0:
-            temp_df = tabelas[0]
-            if 'Papel' in temp_df.columns and 'Mrg. Líq.' in temp_df.columns:
-                df = temp_df
+    # PROCESSAMENTO CONCORRENTE (MULTITHREADING) PARA ALTA VELOCIDADE
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(extrair_dados_yahoo, t): t for t in tickers}
+        for future in as_completed(futures):
+            dado = future.result()
+            if dado:
+                resultados.append(dado)
                 
-    except Exception as e:
-        print(f"Erro de comunicação com B3: {e}")
-
-    # Se a extração falhar, retorna vazio (sem exibir dados falsos na tela)
+    df = pd.DataFrame(resultados)
+    
     if df.empty:
         return df
         
-    cols_percent = ['Div.Yield', 'Mrg Ebit', 'Mrg. Líq.', 'ROIC', 'ROE', 'Cresc. Rec.5a']
-    for col in cols_percent:
-        df[col] = df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.replace('%', '', regex=False)
-        df[col] = pd.to_numeric(df[col], errors='coerce') / 100
-
-    df = df.rename(columns={
-        'Papel': 'ticker', 'Cotação': 'preco', 'Mrg. Líq.': 'margem',
-        'Liq.2meses': 'liquidez', 'Cresc. Rec.5a': 'crescimento', 'Div.Yield': 'dy',
-        'P/L': 'pl', 'P/VP': 'pvp', 'EV/EBIT': 'evebit', 'ROIC': 'roic', 'ROE': 'roe',
-        'Patrim. Líq': 'patrimonio', 'Dív.Líq/ Patrim.': 'divida_patrimonio'
-    })
-
-    for col in ['pl', 'pvp', 'evebit', 'patrimonio', 'divida_patrimonio']:
-        if col in df:
-            if df[col].dtype == 'object':
-                df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce')
-            else:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    df['lpa'] = df['preco'] / df['pl']
-    df['vpa'] = df['preco'] / df['pvp']
-    
-    df['logo'] = df['ticker'].apply(lambda x: f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{x}.png")
-    df['nome'] = df['ticker'].apply(lambda t: NOMES_B3.get(t[:4], f"Companhia {t[:4]} S.A."))
+    df = df.fillna(0)
     
     _CACHE["df"] = df
     _CACHE["updated_at"] = agora
@@ -129,11 +136,11 @@ def get_rankings():
 
     if metodo == "graham":
         df['valor_justo'] = df.apply(lambda r: np.sqrt(22.5 * r['lpa'] * r['vpa']) if r['lpa'] > 0 and r['vpa'] > 0 else 0, axis=1)
-        df['potencial'] = (df['valor_justo'] - df['preco']) / df['preco']
+        df['potencial'] = (df['valor_justo'] - df['preco']) / (df['preco'] or 1)
         df = df.sort_values(by='potencial', ascending=False)
     elif metodo == "bazin":
         df['preco_teto'] = (df['preco'] * df['dy']) / 0.06
-        df['potencial'] = (df['preco_teto'] - df['preco']) / df['preco']
+        df['potencial'] = (df['preco_teto'] - df['preco']) / (df['preco'] or 1)
         df = df.sort_values(by='potencial', ascending=False)
     elif metodo == "greenblatt":
         df_m = df[(df['evebit'] > 0) & (df['roic'] > 0)].copy()
@@ -158,11 +165,10 @@ def get_analise_completa():
         return jsonify({"error": "Nenhum ativo selecionado."})
     
     periodo_solicitado = request.args.get('periodo', '1 Ano')
-    
     df_base = obter_dados_base()
     
     if df_base.empty:
-        return jsonify({"error": "Acesso negado temporariamente pelo servidor da B3. Tente em alguns minutos."})
+        return jsonify({"error": "Servidor temporariamente indisponível."})
         
     empresa_data = df_base[df_base['ticker'] == ticker_input]
     
@@ -172,7 +178,7 @@ def get_analise_completa():
     item = empresa_data.iloc[0].replace([np.inf, -np.inf], np.nan).fillna(0)
     
     site_ri = f"https://www.google.com/search?q=RI+Relações+com+Investidores+{item['nome']}"
-    link_relatorio = f"https://www.fundamentus.com.br/detalhes.php?papel={ticker_input}"
+    link_relatorio = f"https://br.financas.yahoo.com/quote/{ticker_input}.SA/key-statistics"
 
     fundamentos_dict = {
         "preco": float(item['preco']), "pl": float(item['pl']), "pvp": float(item['pvp']),
@@ -184,9 +190,7 @@ def get_analise_completa():
         "links": {"site_ri": site_ri, "relatorio_oficial": link_relatorio}
     }
 
-    p_map = {
-        "30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"
-    }
+    p_map = {"30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"}
     chart_data = None
 
     try:
