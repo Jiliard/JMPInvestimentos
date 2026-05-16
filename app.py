@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import requests
 import yfinance as yf
+import cloudscraper # <--- NOVA BIBLIOTECA AQUI
 import warnings
 import time
 
@@ -12,9 +13,6 @@ warnings.filterwarnings("ignore")
 app = Flask(__name__)
 CORS(app)
 
-# ==============================================================================
-# BASE DE TRADUÇÃO DE NOMES DA B3
-# ==============================================================================
 NOMES_B3 = {
     "PETR": "Petrobras", "VALE": "Vale S.A.", "ITUB": "Itaú Unibanco", "BBDC": "Banco Bradesco",
     "BBAS": "Banco do Brasil", "ABEV": "Ambev S.A.", "WEGE": "WEG Equipamentos", "ELET": "Eletrobras",
@@ -22,18 +20,7 @@ NOMES_B3 = {
     "RADL": "Raia Drogasil", "CSNA": "Siderúrgica Nacional", "GGBR": "Gerdau S.A.", "USIM": "Usiminas",
     "JBSS": "JBS Alimentos", "MRFG": "Marfrig Global", "BEEF": "Minerva Foods", "CMIG": "Cemig Energia",
     "SBSP": "Sabesp Saneamento", "CPLE": "Copel Energia", "ENEV": "Eneva Geração", "EGIE": "Engie Brasil",
-    "CCRO": "Grupo CCR", "GOAU": "Metalúrgica Gerdau", "KLBN": "Klabin Celulose", "CYRE": "Cyrela Empreendimentos",
-    "MRVE": "MRV Engenharia", "EZTC": "EZTEC Construtora", "LREN": "Lojas Renner", "MGLU": "Magazine Luiza",
-    "ASAI": "Assaí Atacadista", "CRFB": "Carrefour Brasil", "NTCO": "Natura &Co", "TIMS": "TIM Brasil",
-    "VIVT": "Telefônica Brasil (Vivo)", "HYPE": "Hypera Pharma", "FLRY": "Grupo Fleury", "TOTS": "Totvs Tecnologia",
-    "CSAN": "Cosan S.A.", "RAIZ": "Raízen Energia", "VBBR": "Vibra Energia", "UGPA": "Ultrapar Participações",
-    "BRKM": "Braskem Química", "CIEL": "Cielo S.A.", "PSSA": "Porto Seguro", "BBSE": "BB Seguridade",
-    "CXSE": "Caixa Seguridade", "MDIA": "M. Dias Branco", "SMTO": "São Martinho", "SLCE": "SLC Agrícola",
-    "ALOS": "Allos Shoppings", "IGTI": "Iguatemi S.A.", "MULT": "Multiplan Empreendimentos", "TAEE": "Taesa Transmissão",
-    "TRPL": "ISA CTEEP", "SANB": "Banco Santander", "BPAC": "BTG Pactual", "PRIO": "Prio Petróleo",
-    "RECV": "PetroRecôncavo", "SOMA": "Grupo Soma", "ARZZ": "Arezzo&Co", "CVCB": "CVC Viagens",
-    "GOLL": "Gol Linhas Aéreas", "AZUL": "Azul Linhas Aéreas", "EMBR": "Embraer Aviação", "POMO": "Marcopolo",
-    "TEND": "Tenda Construtora", "DIRR": "Direcional Engenharia", "SEQL": "Sequoia Logística", "JALL": "Jalles Machado"
+    "CCRO": "Grupo CCR"
 }
 
 _CACHE = {"df": None, "updated_at": 0}
@@ -46,39 +33,31 @@ def obter_dados_base():
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    # ==============================================================================
-    # SISTEMA ANTI-BLOQUEIO RESILIENTE COM VALIDAÇÃO DE COLUNAS
-    # ==============================================================================
-    rotas = [
-        "https://api.allorigins.win/raw?url=https://www.fundamentus.com.br/resultado.php",
-        "https://api.codetabs.com/v1/proxy?quest=https://www.fundamentus.com.br/resultado.php",
-        "https://corsproxy.io/?https://www.fundamentus.com.br/resultado.php",
-        "https://www.fundamentus.com.br/resultado.php"
-    ]
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-    }
-    
+    url = 'https://www.fundamentus.com.br/resultado.php'
     df = pd.DataFrame()
     
-    for url in rotas:
-        try:
-            r = requests.get(url, headers=headers, timeout=15)
-            r.encoding = 'utf-8' if 'proxy' in url or 'allorigins' in url else 'ISO-8859-1'
-            
-            tabelas = pd.read_html(r.text, thousands='.', decimal=',')
-            if tabelas and len(tabelas) > 0:
-                temp_df = tabelas[0]
+    try:
+        # PULO DO GATO: O Cloudscraper imita um Chrome real no Windows para passar pelo firewall
+        scraper = cloudscraper.create_scraper(browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        })
+        
+        r = scraper.get(url, timeout=15)
+        r.encoding = 'ISO-8859-1'
+        
+        tabelas = pd.read_html(r.text, thousands='.', decimal=',')
+        
+        if tabelas and len(tabelas) > 0:
+            temp_df = tabelas[0]
+            if 'Papel' in temp_df.columns and 'Mrg. Líq.' in temp_df.columns:
+                df = temp_df
                 
-                # VALIDAÇÃO CRÍTICA: Tem certeza que é a tabela do Fundamentus?
-                if 'Papel' in temp_df.columns and 'Mrg. Líq.' in temp_df.columns:
-                    df = temp_df
-                    break  # É a tabela certa! Sai da roleta de proxies.
-        except Exception:
-            continue  # Falhou ou foi bloqueado, tenta o próximo da lista.
+    except Exception as e:
+        print(f"Erro de comunicação com B3: {e}")
 
-    # Trava de segurança definitiva: se todos os proxies falharem, retorna vazio
+    # Se a extração falhar, retorna vazio (sem exibir dados falsos na tela)
     if df.empty:
         return df
         
@@ -121,9 +100,7 @@ def get_tickers():
 @app.route('/api/rankings', methods=['GET'])
 def get_rankings():
     df = obter_dados_base()
-    
-    if df.empty: 
-        return jsonify([]) # Devolve vazio em vez de dar erro 500 no site
+    if df.empty: return jsonify([])
 
     metodo = request.args.get('metodo', 'graham')
     
@@ -185,22 +162,16 @@ def get_analise_completa():
     df_base = obter_dados_base()
     
     if df_base.empty:
-        return jsonify({"error": "Servidor de dados B3 temporariamente indisponível. Tente novamente."})
+        return jsonify({"error": "Acesso negado temporariamente pelo servidor da B3. Tente em alguns minutos."})
         
     empresa_data = df_base[df_base['ticker'] == ticker_input]
     
     if empresa_data.empty:
-        return jsonify({"error": f"Ativo {ticker_input} não encontrado na base de fundamentos."})
+        return jsonify({"error": f"Ativo {ticker_input} não encontrado na base."})
         
     item = empresa_data.iloc[0].replace([np.inf, -np.inf], np.nan).fillna(0)
     
-    ri_links = {
-        "PETR": "https://ri.petrobras.com.br", "VALE": "https://vale.com/pt/investors", 
-        "ITUB": "https://ri.itau.com.br", "BBDC": "https://banco.bradesco/ri",
-        "BBAS": "https://ri.bb.com.br", "ABEV": "https://ri.ambev.com.br",
-        "WEGE": "https://ri.weg.net", "ELET": "https://ri.eletrobras.com"
-    }
-    site_ri = ri_links.get(ticker_input[:4], f"https://www.google.com/search?q=RI+Relações+com+Investidores+{item['nome']}")
+    site_ri = f"https://www.google.com/search?q=RI+Relações+com+Investidores+{item['nome']}"
     link_relatorio = f"https://www.fundamentus.com.br/detalhes.php?papel={ticker_input}"
 
     fundamentos_dict = {
@@ -216,21 +187,16 @@ def get_analise_completa():
     p_map = {
         "30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"
     }
-    periodo_yf = p_map.get(periodo_solicitado, "1y")
     chart_data = None
 
     try:
-        df_yf = yf.download(ticker_input + '.SA', period=periodo_yf, progress=False, ignore_tz=True)
-        
+        df_yf = yf.download(ticker_input + '.SA', period=p_map.get(periodo_solicitado, "1y"), progress=False, ignore_tz=True)
         if not df_yf.empty:
             if isinstance(df_yf.columns, pd.MultiIndex):
                 df_yf.columns = df_yf.columns.get_level_values(0)
-
             df_yf = df_yf.dropna(subset=['Close']).sort_index()
             
-            datas = df_yf.index.strftime('%Y-%m-%d').tolist()
             fechamentos = [float(v) for v in df_yf['Close'].values]
-            
             series_close = pd.Series(fechamentos)
             delta = series_close.diff()
             gain = delta.where(delta > 0, 0).rolling(14).mean()
@@ -238,19 +204,16 @@ def get_analise_completa():
             rs = gain / loss.replace(0, np.nan)
             rsi = (100 - (100 / (1 + rs))).fillna(50).tolist()
             
-            janela_curta = min(50, len(series_close))
-            janela_longa = min(200, len(series_close))
-            ma50 = series_close.rolling(janela_curta).mean().fillna(method='bfill').tolist()
-            ma200 = series_close.rolling(janela_longa).mean().fillna(method='bfill').tolist()
-
             chart_data = {
-                "dates": datas,
+                "dates": df_yf.index.strftime('%Y-%m-%d').tolist(),
                 "open": [float(v) for v in df_yf['Open'].values],
                 "high": [float(v) for v in df_yf['High'].values],
                 "low": [float(v) for v in df_yf['Low'].values],
                 "close": fechamentos,
                 "volume": [float(v) for v in df_yf['Volume'].values],
-                "rsi": rsi, "ma50": ma50, "ma200": ma200
+                "rsi": rsi,
+                "ma50": series_close.rolling(min(50, len(series_close))).mean().fillna(method='bfill').tolist(),
+                "ma200": series_close.rolling(min(200, len(series_close))).mean().fillna(method='bfill').tolist()
             }
     except Exception:
         pass 
