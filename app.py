@@ -8,9 +8,13 @@ import warnings
 import time
 
 warnings.filterwarnings("ignore")
+
 app = Flask(__name__)
 CORS(app)
 
+# ==============================================================================
+# BASE DE TRADUÇÃO DE NOMES DA B3
+# ==============================================================================
 NOMES_B3 = {
     "PETR": "Petrobras", "VALE": "Vale S.A.", "ITUB": "Itaú Unibanco", "BBDC": "Banco Bradesco",
     "BBAS": "Banco do Brasil", "ABEV": "Ambev S.A.", "WEGE": "WEG Equipamentos", "ELET": "Eletrobras",
@@ -42,16 +46,41 @@ def obter_dados_base():
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    # PULO DO GATO: Usamos um túnel proxy para mascarar o IP do Render e burlar o firewall
-    url = 'https://api.allorigins.win/raw?url=https://www.fundamentus.com.br/resultado.php'
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    # ==============================================================================
+    # SISTEMA ANTI-BLOQUEIO RESILIENTE (ROTAÇÃO DE PROXIES)
+    # ==============================================================================
+    rotas = [
+        "https://api.codetabs.com/v1/proxy?quest=https://www.fundamentus.com.br/resultado.php",
+        "https://corsproxy.io/?https://www.fundamentus.com.br/resultado.php",
+        "https://api.allorigins.win/raw?url=https://www.fundamentus.com.br/resultado.php",
+        "https://www.fundamentus.com.br/resultado.php"
+    ]
     
-    r = requests.get(url, headers=headers)
-    r.encoding = 'utf-8' # Garante a leitura correta dos caracteres que passam pelo túnel
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Referer': 'https://www.fundamentus.com.br/'
+    }
     
-    # Lemos o texto bruto devolvido pelo proxy
-    df = pd.read_html(r.text, thousands='.', decimal=',')[0]
+    df = pd.DataFrame()
     
+    for url in rotas:
+        try:
+            r = requests.get(url, headers=headers, timeout=12)
+            r.encoding = 'utf-8' if 'proxy' in url or 'allorigins' in url else 'ISO-8859-1'
+            
+            tabelas = pd.read_html(r.text, thousands='.', decimal=',')
+            if tabelas and len(tabelas) > 0:
+                df = tabelas[0]
+                break  # SUCESSO! Conseguiu extrair a tabela, sai da roleta de proxies.
+        except Exception:
+            continue  # Fomos bloqueados nesta tentativa, gira a roleta e tenta o próximo.
+
+    # Trava de segurança definitiva: se todos os proxies do mundo falharem, não trava a tela
+    if df.empty:
+        return df
+        
     cols_percent = ['Div.Yield', 'Mrg Ebit', 'Mrg. Líq.', 'ROIC', 'ROE', 'Cresc. Rec.5a']
     for col in cols_percent:
         df[col] = df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.replace('%', '', regex=False)
@@ -84,12 +113,17 @@ def obter_dados_base():
 @app.route('/api/tickers', methods=['GET'])
 def get_tickers():
     df = obter_dados_base()
+    if df.empty: return jsonify([])
     tickers = sorted((df['ticker'] + ".SA").tolist())
     return jsonify(tickers)
 
 @app.route('/api/rankings', methods=['GET'])
 def get_rankings():
     df = obter_dados_base()
+    
+    if df.empty: 
+        return jsonify([]) # Devolve vazio em vez de dar erro 500 no site
+
     metodo = request.args.get('metodo', 'graham')
     
     liq_min = float(request.args.get('liq_min', 100000))
@@ -148,6 +182,10 @@ def get_analise_completa():
     periodo_solicitado = request.args.get('periodo', '1 Ano')
     
     df_base = obter_dados_base()
+    
+    if df_base.empty:
+        return jsonify({"error": "Servidor de dados B3 temporariamente indisponível. Tente novamente."})
+        
     empresa_data = df_base[df_base['ticker'] == ticker_input]
     
     if empresa_data.empty:
