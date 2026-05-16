@@ -5,6 +5,8 @@ import numpy as np
 import yfinance as yf
 import warnings
 import time
+import random
+import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 warnings.filterwarnings("ignore")
@@ -13,73 +15,70 @@ app = Flask(__name__)
 CORS(app)
 
 # ==============================================================================
-# BASE DE ATIVOS B3 PARA BUSCA CONCORRENTE
+# BASE DE ATIVOS B3 (Top 30 mais líquidas do IBOVESPA para evitar Timeout/Bloqueio)
 # ==============================================================================
 NOMES_B3 = {
     "PETR4": "Petrobras", "VALE3": "Vale S.A.", "ITUB4": "Itaú Unibanco", "BBDC4": "Banco Bradesco",
     "BBAS3": "Banco do Brasil", "ABEV3": "Ambev S.A.", "WEGE3": "WEG Equipamentos", "ELET3": "Eletrobras",
     "RENT3": "Localiza", "B3SA3": "B3", "SUZB3": "Suzano", "RDOR3": "Rede D'Or",
     "RADL3": "Raia Drogasil", "CSNA3": "Siderúrgica Nac.", "GGBR4": "Gerdau", "USIM5": "Usiminas",
-    "JBSS3": "JBS", "MRFG3": "Marfrig", "BEEF3": "Minerva", "CMIG4": "Cemig",
-    "SBSP3": "Sabesp", "CPLE6": "Copel", "ENEV3": "Eneva", "EGIE3": "Engie",
-    "CCRO3": "Grupo CCR", "GOAU4": "Metalúrgica Gerdau", "KLBN11": "Klabin", "CYRE3": "Cyrela",
-    "MRVE3": "MRV", "EZTC3": "EZTEC", "LREN3": "Lojas Renner", "MGLU3": "Magazine Luiza",
-    "ASAI3": "Assaí", "CRFB3": "Carrefour", "NTCO3": "Natura", "TIMS3": "TIM",
-    "VIVT3": "Vivo", "HYPE3": "Hypera", "FLRY3": "Fleury", "TOTS3": "Totvs",
-    "CSAN3": "Cosan", "RAIZ4": "Raízen", "VBBR3": "Vibra Energia", "UGPA3": "Ultrapar",
-    "BRKM5": "Braskem", "CIEL3": "Cielo", "PSSA3": "Porto Seguro", "BBSE3": "BB Seguridade",
-    "CXSE3": "Caixa Seguridade", "MDIA3": "M. Dias Branco", "SMTO3": "São Martinho", "SLCE3": "SLC Agrícola",
-    "ALOS3": "Allos", "IGTI11": "Iguatemi", "MULT3": "Multiplan", "TAEE11": "Taesa",
-    "TRPL4": "ISA CTEEP", "SANB11": "Santander", "BPAC11": "BTG Pactual", "PRIO3": "Prio",
-    "RECV3": "PetroRecôncavo", "SOMA3": "Grupo Soma", "ARZZ3": "Arezzo", "CVCB3": "CVC",
-    "GOLL4": "Gol", "AZUL4": "Azul", "EMBR3": "Embraer", "POMO4": "Marcopolo"
+    "JBSS3": "JBS", "CMIG4": "Cemig", "SBSP3": "Sabesp", "CPLE6": "Copel",
+    "ENEV3": "Eneva", "EGIE3": "Engie", "CCRO3": "Grupo CCR", "LREN3": "Lojas Renner",
+    "MGLU3": "Magazine Luiza", "ASAI3": "Assaí", "CRFB3": "Carrefour", "NTCO3": "Natura",
+    "TIMS3": "TIM", "VIVT3": "Vivo"
 }
 
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 3600 # Cache de 1 hora para alta performance
-
-# FUNÇÃO EXECUTADA PELAS THREADS
-def extrair_dados_yahoo(ticker):
-    try:
-        ativo = yf.Ticker(f"{ticker}.SA")
-        info = ativo.info
-        
-        preco = info.get('currentPrice') or info.get('previousClose')
-        if not preco: return None
-            
-        return {
-            'ticker': ticker,
-            'nome': NOMES_B3.get(ticker, f"Cia {ticker}"),
-            'logo': f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png",
-            'preco': float(preco),
-            'pl': float(info.get('trailingPE') or 0),
-            'pvp': float(info.get('priceToBook') or 0),
-            'lpa': float(info.get('trailingEps') or 0),
-            'vpa': float(info.get('bookValue') or 0),
-            'dy': float(info.get('dividendYield') or 0),
-            'roic': float(info.get('returnOnAssets') or 0), 
-            'roe': float(info.get('returnOnEquity') or 0),
-            'margem': float(info.get('profitMargins') or 0),
-            'evebit': float(info.get('enterpriseToEbitda') or 0),
-            'crescimento': float(info.get('revenueGrowth') or 0),
-            'liquidez': float(info.get('volume') or 0) * float(preco)
-        }
-    except Exception:
-        return None
+CACHE_TTL = 3600 # Salva os dados em memória por 1 hora (alivia a API do Yahoo)
 
 def obter_dados_base():
     global _CACHE
     agora = time.time()
     
-    # Se os dados já foram baixados na última hora, usa a memória (Ultra rápido)
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
     resultados = []
     tickers = list(NOMES_B3.keys())
     
-    # PROCESSAMENTO CONCORRENTE (MULTITHREADING) PARA ALTA VELOCIDADE
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    # 1. Criação de Sessão Persistente (Imitando um navegador)
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    })
+    
+    def extrair_dados_yahoo(ticker):
+        # 2. Jitter: Atraso aleatório para evitar Erro 429 (Muitas Requisições)
+        time.sleep(random.uniform(0.5, 1.5))
+        try:
+            ativo = yf.Ticker(f"{ticker}.SA", session=session)
+            info = ativo.info
+            
+            preco = info.get('currentPrice') or info.get('previousClose')
+            if not preco: return None
+                
+            return {
+                'ticker': ticker,
+                'nome': NOMES_B3.get(ticker, f"Cia {ticker}"),
+                'logo': f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png",
+                'preco': float(preco),
+                'pl': float(info.get('trailingPE') or 0),
+                'pvp': float(info.get('priceToBook') or 0),
+                'lpa': float(info.get('trailingEps') or 0),
+                'vpa': float(info.get('bookValue') or 0),
+                'dy': float(info.get('dividendYield') or 0),
+                'roic': float(info.get('returnOnAssets') or 0), 
+                'roe': float(info.get('returnOnEquity') or 0),
+                'margem': float(info.get('profitMargins') or 0),
+                'evebit': float(info.get('enterpriseToEbitda') or 0),
+                'crescimento': float(info.get('revenueGrowth') or 0),
+                'liquidez': float(info.get('volume') or 0) * float(preco)
+            }
+        except Exception:
+            return None
+
+    # 3. Paralelismo Suave (3 processos por vez, não mais 20)
+    with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {executor.submit(extrair_dados_yahoo, t): t for t in tickers}
         for future in as_completed(futures):
             dado = future.result()
