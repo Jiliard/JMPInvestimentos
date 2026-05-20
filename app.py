@@ -36,7 +36,6 @@ def obter_dados_base():
     
     url_tv = "https://scanner.tradingview.com/brazil/scan"
     
-    # REMOVIDA A COLUNA "revenue_growth_yoy" QUE ESTAVA CAUSANDO O ERRO 400
     payload = {
         "symbols": {"tickers": [f"BMFBOVESPA:{t}" for t in NOMES_B3.keys()]},
         "columns": [
@@ -70,7 +69,6 @@ def obter_dados_base():
             ticker = ticker_completo.split(":")[-1] if ":" in ticker_completo else ticker_completo
             
             val = item.get("d", [])
-            # Ajustado para o novo tamanho da lista de colunas (11 itens: do índice 0 ao 10)
             if not val or len(val) < 11:
                 continue
                 
@@ -88,14 +86,10 @@ def obter_dados_base():
             roe = seguro(6, 15.0) / 100.0
             roic = seguro(7, 10.0) / 100.0
             margem = seguro(8, 10.0) / 100.0
-            
-            # Índices reajustados devido à remoção da coluna anterior
             evebit = seguro(9, 8.0)
             lpa = seguro(10, preco / pl if pl > 0 else 0)
-            
             vpa = preco / pvp if pvp > 0 else 0.0
             
-            # Fallback seguro para as colunas não solicitadas
             crescimento = 0.05 
             patrimonio = 5000000000.0
             divida_patrimonio = 0.4
@@ -173,13 +167,14 @@ def get_rankings():
 
     if df.empty: return jsonify([])
 
+    # MATEMÁTICA VETORIAL CORRIGIDA (O ERRO DO LOG ESTAVA AQUI)
     if metodo == "graham":
         df['valor_justo'] = df.apply(lambda r: np.sqrt(22.5 * r['lpa'] * r['vpa']) if r['lpa'] > 0 and r['vpa'] > 0 else 0, axis=1)
-        df['potencial'] = (df['valor_justo'] - df['preco']) / (df['preco'] or 1)
+        df['potencial'] = (df['valor_justo'] - df['preco']) / df['preco'].replace(0, 1)
         df = df.sort_values(by='potencial', ascending=False)
     elif metodo == "bazin":
         df['preco_teto'] = (df['preco'] * df['dy']) / 0.06
-        df['potencial'] = (df['preco_teto'] - df['preco']) / (df['preco'] or 1)
+        df['potencial'] = (df['preco_teto'] - df['preco']) / df['preco'].replace(0, 1)
         df = df.sort_values(by='potencial', ascending=False)
     elif metodo == "greenblatt":
         df_m = df[(df['evebit'] > 0) & (df['roic'] > 0)].copy()
