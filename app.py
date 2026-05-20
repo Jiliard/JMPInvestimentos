@@ -11,8 +11,11 @@ warnings.filterwarnings("ignore")
 app = Flask(__name__)
 CORS(app)
 
+# CHAVE DA BRAPI PARA O GRÁFICO INDIVIDUAL
+BRAPI_TOKEN = "q6nberPzw9REsXXGDXPj1b"
+
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 900 # Salva em memória por 15 minutos para todos os usuários
+CACHE_TTL = 900 # Salva em memória por 15 minutos
 
 def obter_dados_base():
     global _CACHE
@@ -25,7 +28,6 @@ def obter_dados_base():
     
     url_tv = "https://scanner.tradingview.com/brazil/scan"
     
-    # PAYLOAD MESTRE: Pede até 500 ações brasileiras ordenadas por volume
     payload = {
         "markets": ["brazil"],
         "filter": [
@@ -62,7 +64,6 @@ def obter_dados_base():
             ticker_completo = item.get("s", "")
             ticker = ticker_completo.split(":")[-1] if ":" in ticker_completo else ticker_completo
             
-            # Filtro básico para garantir que é uma ação (4, 5 ou 6 caracteres terminando em número)
             if len(ticker) > 6 or len(ticker) < 4:
                 continue
             
@@ -75,9 +76,8 @@ def obter_dados_base():
                 return float(val[indice])
 
             preco = seguro(2)
-            if preco <= 0.1: continue # Ignora centavos e dados corrompidos
+            if preco <= 0.1: continue 
             
-            # A coluna 1 traz a Razão Social real enviada pela B3
             nome_empresa = val[1] if val[1] else f"Cia {ticker}"
             
             volume = seguro(3)
@@ -222,53 +222,61 @@ def get_analise_completa():
         "links": {"site_ri": site_ri, "relatorio_oficial": link_relatorio}
     }
 
+    # Tradução do período do site para o padrão suportado pela Brapi API
     p_map = {"30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"}
+    range_api = p_map.get(periodo_solicitado, "1y")
     chart_data = None
 
     try:
-        import yfinance as yf
+        # A MÁGICA FINAL: Usamos a Brapi para desenhar o gráfico com precisão!
+        url_chart = f"https://brapi.dev/api/quote/{ticker_input}?range={range_api}&interval=1d&token={BRAPI_TOKEN}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url_chart, headers=headers, timeout=10)
         
-        # Faz o download garantindo intervalo diário explícito
-        df_yf = yf.download(f"{ticker_input}.SA", period=p_map.get(periodo_solicitado, "1y"), interval="1d", progress=False)
-        
-        if not df_yf.empty:
-            # Achatamento robusto de colunas (Previne erros do novo YFinance)
-            if isinstance(df_yf.columns, pd.MultiIndex):
-                df_yf.columns = [c[0] for c in df_yf.columns]
+        if r.status_code == 200:
+            dados_json = r.json()
+            results = dados_json.get("results", [])
+            
+            if results and "historicalDataPrice" in results[0]:
+                hist = results[0]["historicalDataPrice"]
                 
-            df_yf = df_yf.dropna(subset=['Close']).sort_index()
-            
-            fechamentos = [float(v) for v in df_yf['Close'].values]
-            series_close = pd.Series(fechamentos)
-            
-            # Cálculo de RSI
-            delta = series_close.diff()
-            gain = delta.where(delta > 0, 0).rolling(14).mean()
-            loss = -delta.where(delta < 0, 0).rolling(14).mean()
-            rs = gain / loss.replace(0, np.nan)
-            rsi = (100 - (100 / (1 + rs))).fillna(50).tolist()
-            
-            # CORREÇÃO PANDAS 2.2+: Usar .bfill() direto na Média Móvel
-            ma50 = series_close.rolling(window=min(50, len(series_close))).mean().bfill().tolist()
-            ma200 = series_close.rolling(window=min(200, len(series_close))).mean().bfill().tolist()
-            
-            chart_data = {
-                "dates": df_yf.index.strftime('%Y-%m-%d').tolist(),
-                "open": [float(v) for v in df_yf['Open'].values],
-                "high": [float(v) for v in df_yf['High'].values],
-                "low": [float(v) for v in df_yf['Low'].values],
-                "close": fechamentos,
-                "volume": [float(v) for v in df_yf['Volume'].values],
-                "rsi": rsi,
-                "ma50": ma50,
-                "ma200": ma200
-            }
-        else:
-            print(f"⚠️ [GRÁFICO] Yahoo Finance retornou vazio para {ticker_input}")
-            
+                # O Pandas devora essa lista e cria o DataFrame do gráfico instantaneamente
+                df_chart = pd.DataFrame(hist)
+                
+                if not df_chart.empty and 'close' in df_chart.columns:
+                    # Tenta converter a data de Timestamp para String legível
+                    try:
+                        df_chart['date'] = pd.to_datetime(df_chart['date'], unit='s').dt.strftime('%Y-%m-%d')
+                    except Exception:
+                        df_chart['date'] = pd.to_datetime(df_chart['date']).dt.strftime('%Y-%m-%d')
+                        
+                    series_close = df_chart['close']
+                    
+                    # Matemática do RSI
+                    delta = series_close.diff()
+                    gain = delta.where(delta > 0, 0).rolling(14).mean()
+                    loss = -delta.where(delta < 0, 0).rolling(14).mean()
+                    rs = gain / loss.replace(0, np.nan)
+                    rsi = (100 - (100 / (1 + rs))).fillna(50).tolist()
+                    
+                    # Matemática das Médias Móveis Seguras
+                    ma50 = series_close.rolling(window=min(50, len(series_close))).mean().bfill().tolist()
+                    ma200 = series_close.rolling(window=min(200, len(series_close))).mean().bfill().tolist()
+                    
+                    chart_data = {
+                        "dates": df_chart['date'].tolist(),
+                        "open": df_chart['open'].tolist(),
+                        "high": df_chart['high'].tolist(),
+                        "low": df_chart['low'].tolist(),
+                        "close": df_chart['close'].tolist(),
+                        "volume": df_chart.get('volume', pd.Series([0]*len(df_chart))).tolist(),
+                        "rsi": rsi,
+                        "ma50": ma50,
+                        "ma200": ma200
+                    }
     except Exception as e:
-        print(f"🚨 [ERRO CRÍTICO NO GRÁFICO] {ticker_input}: {e}")
-        chart_data = None
+        print(f"🚨 [ERRO NO GRÁFICO BRAPI] {ticker_input}: {e}")
+        pass 
 
     return jsonify({
         "ticker": ticker_input,
