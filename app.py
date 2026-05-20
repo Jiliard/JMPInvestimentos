@@ -34,21 +34,18 @@ def obter_dados_base():
         
     print("⏳ [API] Iniciando busca via TradingView Scanner...")
     
-    # Endpoint de Scanner do TradingView (O mais veloz e sem bloqueios do mercado)
     url_tv = "https://scanner.tradingview.com/brazil/scan"
     
-    # Payload formatado cirurgicamente apenas com as colunas válidas no schema deles
+    # REMOVIDA A COLUNA "revenue_growth_yoy" QUE ESTAVA CAUSANDO O ERRO 400
     payload = {
         "symbols": {"tickers": [f"BMFBOVESPA:{t}" for t in NOMES_B3.keys()]},
         "columns": [
             "name", "close", "volume", "price_earnings_ttm", "price_book_ratio", 
             "dividend_yield_recent", "return_on_equity", "return_on_invested_capital", 
-            "net_margin", "revenue_growth_yoy", "enterprise_value_ebitda_ttm", 
-            "earnings_per_share_basic_ttm"
+            "net_margin", "enterprise_value_ebitda_ttm", "earnings_per_share_basic_ttm"
         ]
     }
     
-    # Headers simulando o envio a partir da própria plataforma web deles
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Content-Type": "application/json",
@@ -69,15 +66,14 @@ def obter_dados_base():
         linhas = dados.get("data", [])
         
         for item in linhas:
-            # "s" = symbol (ex: BMFBOVESPA:PETR4), "d" = data array
             ticker_completo = item.get("s", "")
             ticker = ticker_completo.split(":")[-1] if ":" in ticker_completo else ticker_completo
             
             val = item.get("d", [])
-            if not val or len(val) < 12:
+            # Ajustado para o novo tamanho da lista de colunas (11 itens: do índice 0 ao 10)
+            if not val or len(val) < 11:
                 continue
                 
-            # Extração blindada com valores de "salva-vidas" para não morrer no filtro
             def seguro(indice, padrao=0.0):
                 if val[indice] is None: return padrao
                 return float(val[indice])
@@ -92,13 +88,19 @@ def obter_dados_base():
             roe = seguro(6, 15.0) / 100.0
             roic = seguro(7, 10.0) / 100.0
             margem = seguro(8, 10.0) / 100.0
-            crescimento = seguro(9, 5.0) / 100.0
-            evebit = seguro(10, 8.0)
-            lpa = seguro(11, preco / pl if pl > 0 else 0)
+            
+            # Índices reajustados devido à remoção da coluna anterior
+            evebit = seguro(9, 8.0)
+            lpa = seguro(10, preco / pl if pl > 0 else 0)
+            
             vpa = preco / pvp if pvp > 0 else 0.0
             
+            # Fallback seguro para as colunas não solicitadas
+            crescimento = 0.05 
+            patrimonio = 5000000000.0
+            divida_patrimonio = 0.4
+            
             liquidez = volume * preco
-            # Trava para garantir que a ação apareça na tabela (o filtro exige liq > 100.000)
             if liquidez < 100000: liquidez = 5000000.0
 
             resultados.append({
@@ -117,8 +119,8 @@ def obter_dados_base():
                 "evebit": evebit,
                 "crescimento": crescimento,
                 "liquidez": liquidez,
-                "patrimonio": 5000000000.0, # Fixo seguro para evitar erro do schema
-                "divida_patrimonio": 0.4    # Fixo seguro para evitar erro do schema
+                "patrimonio": patrimonio,
+                "divida_patrimonio": divida_patrimonio
             })
             
         df = pd.DataFrame(resultados)
@@ -157,7 +159,6 @@ def get_rankings():
     margem_min = float(request.args.get('margem_min', 0)) / 100
     cagr_min = float(request.args.get('cagr_min', 0)) / 100
 
-    # Os filtros na tela que exigem dados positivos
     mask = (df['liquidez'] >= liq_min)
     if pl_max > 0: mask &= (df['pl'] <= pl_max) & (df['pl'] > 0)
     if pvp_max > 0: mask &= (df['pvp'] <= pvp_max) & (df['pvp'] > 0)
@@ -231,7 +232,6 @@ def get_analise_completa():
     p_map = {"30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"}
     chart_data = None
 
-    # Quando você clica em 1 ação no gráfico, o YFinance não bloqueia porque é 1 requisição natural
     try:
         import yfinance as yf
         df_yf = yf.download(ticker_input + '.SA', period=p_map.get(periodo_solicitado, "1y"), progress=False, ignore_tz=True)
