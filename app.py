@@ -222,14 +222,20 @@ def get_analise_completa():
         "links": {"site_ri": site_ri, "relatorio_oficial": link_relatorio}
     }
 
-    # Tradução do período do site para o padrão suportado pela Brapi API
+    # Mapeamento corrigido e otimizado para a API da Brapi
     p_map = {"30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"}
     range_api = p_map.get(periodo_solicitado, "1y")
+    
+    # AJUSTE DINÂMICO DE INTERVALO: Evita que a API recuse períodos longos
+    intervalo_api = "1d"
+    if range_api in ["5y", "10y"]:
+        intervalo_api = "1wk" # Se for 5 ou 10 anos, pede dados semanais para não estourar a API
+
     chart_data = None
 
     try:
-        # A MÁGICA FINAL: Usamos a Brapi para desenhar o gráfico com precisão!
-        url_chart = f"https://brapi.dev/api/quote/{ticker_input}?range={range_api}&interval=1d&token={BRAPI_TOKEN}"
+        # Monta a URL com o range e o intervalo dinâmico calibrados
+        url_chart = f"https://brapi.dev/api/quote/{ticker_input}?range={range_api}&interval={intervalo_api}&token={BRAPI_TOKEN}"
         headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url_chart, headers=headers, timeout=10)
         
@@ -240,43 +246,49 @@ def get_analise_completa():
             if results and "historicalDataPrice" in results[0]:
                 hist = results[0]["historicalDataPrice"]
                 
-                # O Pandas devora essa lista e cria o DataFrame do gráfico instantaneamente
                 df_chart = pd.DataFrame(hist)
                 
                 if not df_chart.empty and 'close' in df_chart.columns:
-                    # Tenta converter a data de Timestamp para String legível
+                    # Garante a conversão correta da data seja em Timestamp ou String
                     try:
                         df_chart['date'] = pd.to_datetime(df_chart['date'], unit='s').dt.strftime('%Y-%m-%d')
                     except Exception:
                         df_chart['date'] = pd.to_datetime(df_chart['date']).dt.strftime('%Y-%m-%d')
                         
+                    # Preenche valores nulos pontuais (caso a API falhe em algum dia específico)
+                    df_chart = df_chart.ffill().bfill()
                     series_close = df_chart['close']
                     
-                    # Matemática do RSI
+                    # Matemática do RSI (Índice de Força Relativa)
                     delta = series_close.diff()
-                    gain = delta.where(delta > 0, 0).rolling(14).mean()
-                    loss = -delta.where(delta < 0, 0).rolling(14).mean()
+                    gain = delta.where(delta > 0, 0).rolling(window=min(14, len(series_close))).mean()
+                    loss = -delta.where(delta < 0, 0).rolling(window=min(14, len(series_close))).mean()
                     rs = gain / loss.replace(0, np.nan)
                     rsi = (100 - (100 / (1 + rs))).fillna(50).tolist()
                     
-                    # Matemática das Médias Móveis Seguras
+                    # Matemática das Médias Móveis (MA50 e MA200) com bfill corrigido para Pandas 2.2+
                     ma50 = series_close.rolling(window=min(50, len(series_close))).mean().bfill().tolist()
                     ma200 = series_close.rolling(window=min(200, len(series_close))).mean().bfill().tolist()
                     
                     chart_data = {
                         "dates": df_chart['date'].tolist(),
-                        "open": df_chart['open'].tolist(),
-                        "high": df_chart['high'].tolist(),
-                        "low": df_chart['low'].tolist(),
-                        "close": df_chart['close'].tolist(),
-                        "volume": df_chart.get('volume', pd.Series([0]*len(df_chart))).tolist(),
+                        "open": [float(v) for v in df_chart['open'].values],
+                        "high": [float(v) for v in df_chart['high'].values],
+                        "low": [float(v) for v in df_chart['low'].values],
+                        "close": [float(v) for v in df_chart['close'].values],
+                        "volume": [float(v) for v in df_chart.get('volume', pd.Series([0]*len(df_chart))).values],
                         "rsi": rsi,
                         "ma50": ma50,
                         "ma200": ma200
                     }
+            else:
+                print(f"⚠️ [GRÁFICO] Estrutura 'historicalDataPrice' ausente na Brapi para {ticker_input}")
+        else:
+            print(f"🚨 [GRÁFICO] Brapi retornou Status {r.status_code} para {ticker_input}")
+            
     except Exception as e:
-        print(f"🚨 [ERRO NO GRÁFICO BRAPI] {ticker_input}: {e}")
-        pass 
+        print(f"🚨 [ERRO CRÍTICO NO GRÁFICO] {ticker_input}: {e}")
+        chart_data = None
 
     return jsonify({
         "ticker": ticker_input,
