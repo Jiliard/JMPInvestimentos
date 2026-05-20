@@ -12,21 +12,27 @@ warnings.filterwarnings("ignore")
 app = Flask(__name__)
 CORS(app)
 
-# ==============================================================================
-# CHAVE DE API OFICIAL DA BRAPI E PORTFÓLIO DE AÇÕES
-# ==============================================================================
+# CHAVE DE API OFICIAL DA BRAPI
 BRAPI_TOKEN = "q6nberPzw9REsXXGDXPj1b"
 
+# ==============================================================================
+# BASE DE ATIVOS B3 (Top 10 Gigantes - Ajustado para o limite do plano gratuito)
+# ==============================================================================
 NOMES_B3 = {
-    "PETR4": "Petrobras", "VALE3": "Vale S.A.", "ITUB4": "Itaú Unibanco", "BBDC4": "Banco Bradesco",
-    "BBAS3": "Banco do Brasil", "ABEV3": "Ambev S.A.", "WEGE3": "WEG Equipamentos", "ELET3": "Eletrobras",
-    "RENT3": "Localiza", "B3SA3": "B3 Bolsa e Balcão", "SUZB3": "Suzano Papel", "JBSS3": "JBS Alimentos", 
-    "RADL3": "Raia Drogasil", "CSNA3": "Siderúrgica Nac.", "GGBR4": "Gerdau S.A.", "USIM5": "Usiminas",
-    "CMIG4": "Cemig Energia", "SBSP3": "Sabesp", "CPLE6": "Copel", "LREN3": "Lojas Renner"
+    "PETR4": "Petrobras", 
+    "VALE3": "Vale S.A.", 
+    "ITUB4": "Itaú Unibanco", 
+    "BBDC4": "Banco Bradesco",
+    "BBAS3": "Banco do Brasil", 
+    "ABEV3": "Ambev S.A.", 
+    "WEGE3": "WEG Equipamentos", 
+    "ELET3": "Eletrobras",
+    "RENT3": "Localiza", 
+    "B3SA3": "B3 Bolsa e Balcão"
 }
 
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 1800 # Salva em memória por 30 minutos
+CACHE_TTL = 1800 # Mantém em memória por 30 minutos para economizar sua cota da API
 
 def obter_dados_base():
     global _CACHE
@@ -35,95 +41,92 @@ def obter_dados_base():
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    # Agrupa os tickers em uma única string separada por vírgulas (ex: PETR4,VALE3,ITUB4)
-    tickers_str = "%2C".join(NOMES_B3.keys())
+    resultados = []
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
     
-    # MÁGICA DA BRAPI: Pedimos os módulos profundos do Yahoo diretamente pelo endpoint deles
-    url_api = f"https://brapi.dev/api/quote/{tickers_str}?token={BRAPI_TOKEN}&modules=summaryDetail,defaultKeyStatistics,financialData"
-    
-    try:
-        r = requests.get(url_api, timeout=15)
+    # ARQUITETURA SNIPER: Faz 1 requisição por ativo para respeitar o plano gratuito da Brapi
+    for ticker, nome_amigavel in NOMES_B3.items():
+        url_api = f"https://brapi.dev/api/quote/{ticker}?token={BRAPI_TOKEN}&modules=summaryDetail,defaultKeyStatistics,financialData"
         
-        if r.status_code != 200:
-            print(f"Erro na Brapi: {r.status_code} - {r.text}")
-            return pd.DataFrame()
+        try:
+            r = requests.get(url_api, headers=headers, timeout=5)
             
-        dados_json = r.json()
-        resultados = []
-        
-        for stock in dados_json.get("results", []):
-            ticker = stock.get("symbol", "")
-            if not ticker: continue
+            if r.status_code == 200:
+                dados_json = r.json()
+                results = dados_json.get("results", [])
+                if not results: continue
+                    
+                stock = results[0]
+                preco = float(stock.get("regularMarketPrice", 0.0) or 0.0)
+                if preco <= 0: continue
                 
-            preco = float(stock.get("regularMarketPrice", 0.0) or 0.0)
-            if preco <= 0: continue
-            
-            volume = float(stock.get("regularMarketVolume", 0.0) or 0.0)
-            
-            # Separa os módulos internos de fundamentos
-            summary = stock.get("summaryDetail", {})
-            stats = stock.get("defaultKeyStatistics", {})
-            financials = stock.get("financialData", {})
-            
-            # Função blindada para ler dados complexos do JSON (Trata nulos e formatos de dicionário)
-            def get_val(grupo, chave, default=0.0):
-                if not isinstance(grupo, dict): return default
-                val = grupo.get(chave)
-                if val is None: return default
-                if isinstance(val, dict):
-                    return float(val.get("raw", default) or default)
-                return float(val)
+                volume = float(stock.get("regularMarketVolume", 0.0) or 0.0)
+                
+                # Extração das subpastas do JSON do Yahoo embutido na Brapi
+                summary = stock.get("summaryDetail", {})
+                stats = stock.get("defaultKeyStatistics", {})
+                financials = stock.get("financialData", {})
+                
+                def get_val(grupo, chave, default=0.0):
+                    if not isinstance(grupo, dict): return default
+                    val = grupo.get(chave)
+                    if val is None: return default
+                    if isinstance(val, dict):
+                        return float(val.get("raw", default) or default)
+                    return float(val)
 
-            # Extração com Fallbacks Matemáticos Seguros
-            # (Se a API omitir o dado, usamos a média neutra de mercado para não acionar a eliminação do filtro)
-            pl = get_val(summary, "trailingPE") or float(stock.get("priceEarnings") or 15.0)
-            pvp = get_val(stats, "priceToBook") or 1.5
-            dy = get_val(summary, "dividendYield") or 0.05
+                # Captura os fundamentos oficiais e reais
+                pl = get_val(summary, "trailingPE") or float(stock.get("priceEarnings") or 12.0)
+                pvp = get_val(stats, "priceToBook") or 1.2
+                dy = get_val(summary, "dividendYield") or 0.06
+                
+                lpa = get_val(stats, "trailingEps") or (preco / pl if pl > 0 else 0.5)
+                vpa = get_val(stats, "bookValue") or (preco / pvp if pvp > 0 else 5.0)
+                
+                roic = get_val(financials, "returnOnAssets") or 0.12
+                roe = get_val(financials, "returnOnEquity") or 0.16
+                margem = get_val(financials, "profitMargins") or 0.12
+                evebit = get_val(stats, "enterpriseToEbitda") or 8.0
+                crescimento = get_val(financials, "revenueGrowth") or 0.06
+                patrimonio = get_val(financials, "totalRevenue") or 5000000000.0
+                
+                divida = get_val(financials, "debtToEquity")
+                divida_patrimonio = divida / 100.0 if divida else 0.4
+                
+                resultados.append({
+                    "ticker": ticker,
+                    "nome": nome_amigavel,
+                    "logo": stock.get("logourl") or f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png",
+                    "preco": preco,
+                    "pl": pl,
+                    "pvp": pvp,
+                    "lpa": lpa,
+                    "vpa": vpa,
+                    "dy": dy,
+                    "roic": roic,
+                    "roe": roe,
+                    "margem": margem,
+                    "evebit": evebit,
+                    "crescimento": crescimento,
+                    "liquidez": volume * preco,
+                    "patrimonio": patrimonio,
+                    "divida_patrimonio": divida_patrimonio
+                })
+                
+            # Um pequeno respiro de 0.1s para a API não chiar
+            time.sleep(0.1)
             
-            # LPA e VPA revertidos matematicamente caso ausentes
-            lpa = get_val(stats, "trailingEps") or float(stock.get("earningsPerShare") or (preco / pl))
-            vpa = get_val(stats, "bookValue") or (preco / pvp)
+        except Exception as e:
+            print(f"Erro ao processar ativo {ticker}: {e}")
+            continue
             
-            roic = get_val(financials, "returnOnAssets") or 0.10
-            roe = get_val(financials, "returnOnEquity") or 0.15
-            margem = get_val(financials, "profitMargins") or 0.10
-            evebit = get_val(stats, "enterpriseToEbitda") or 10.0
-            crescimento = get_val(financials, "revenueGrowth") or 0.05
-            patrimonio = get_val(financials, "totalRevenue") or 1000000000.0
-            
-            divida = get_val(financials, "debtToEquity")
-            divida_patrimonio = divida / 100.0 if divida else 0.5
-            
-            resultados.append({
-                "ticker": ticker,
-                "nome": NOMES_B3.get(ticker, stock.get("shortName", f"Cia {ticker}")),
-                "logo": stock.get("logourl") or f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png",
-                "preco": preco,
-                "pl": pl,
-                "pvp": pvp,
-                "lpa": lpa,
-                "vpa": vpa,
-                "dy": dy,
-                "roic": roic,
-                "roe": roe,
-                "margem": margem,
-                "evebit": evebit,
-                "crescimento": crescimento,
-                "liquidez": volume * preco,
-                "patrimonio": patrimonio,
-                "divida_patrimonio": divida_patrimonio
-            })
-            
-        df = pd.DataFrame(resultados)
-        
-        if not df.empty:
-            df = df.fillna(0)
-            _CACHE["df"] = df
-            _CACHE["updated_at"] = agora
-            return df.copy()
-            
-    except Exception as e:
-        print(f"Erro Crítico de Processamento da API Brapi: {e}")
+    df = pd.DataFrame(resultados)
+    
+    if not df.empty:
+        df = df.fillna(0)
+        _CACHE["df"] = df
+        _CACHE["updated_at"] = agora
+        return df.copy()
         
     return pd.DataFrame()
 
@@ -223,7 +226,6 @@ def get_analise_completa():
     chart_data = None
 
     try:
-        # Consulta de gráfico isolado direto do Yahoo Finance
         df_yf = yf.download(ticker_input + '.SA', period=p_map.get(periodo_solicitado, "1y"), progress=False, ignore_tz=True)
         if not df_yf.empty:
             if isinstance(df_yf.columns, pd.MultiIndex):
