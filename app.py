@@ -11,19 +11,8 @@ warnings.filterwarnings("ignore")
 app = Flask(__name__)
 CORS(app)
 
-# ==============================================================================
-# BASE DE ATIVOS B3 (As 20 ações mais representativas para o TCC)
-# ==============================================================================
-NOMES_B3 = {
-    "PETR4": "Petrobras", "VALE3": "Vale S.A.", "ITUB4": "Itaú Unibanco", "BBDC4": "Banco Bradesco",
-    "BBAS3": "Banco do Brasil", "ABEV3": "Ambev S.A.", "WEGE3": "WEG Equipamentos", "ELET3": "Eletrobras",
-    "RENT3": "Localiza", "B3SA3": "B3 Bolsa e Balcão", "SUZB3": "Suzano Papel", "JBSS3": "JBS Alimentos", 
-    "RADL3": "Raia Drogasil", "CSNA3": "Siderúrgica Nac.", "GGBR4": "Gerdau S.A.", "USIM5": "Usiminas",
-    "CMIG4": "Cemig Energia", "SBSP3": "Sabesp", "CPLE6": "Copel", "LREN3": "Lojas Renner"
-}
-
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 900 # Salva em memória por 15 minutos
+CACHE_TTL = 900 # Salva em memória por 15 minutos para todos os usuários
 
 def obter_dados_base():
     global _CACHE
@@ -32,24 +21,29 @@ def obter_dados_base():
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    print("⏳ [API] Iniciando busca via TradingView Scanner...")
+    print("⏳ [API] Varrendo a B3 inteira via TradingView Scanner...")
     
     url_tv = "https://scanner.tradingview.com/brazil/scan"
     
+    # PAYLOAD MESTRE: Pede até 500 ações brasileiras ordenadas por volume
     payload = {
-        "symbols": {"tickers": [f"BMFBOVESPA:{t}" for t in NOMES_B3.keys()]},
+        "markets": ["brazil"],
+        "filter": [
+            {"left": "type", "operation": "equal", "right": "stock"}
+        ],
         "columns": [
-            "name", "close", "volume", "price_earnings_ttm", "price_book_ratio", 
-            "dividend_yield_recent", "return_on_equity", "return_on_invested_capital", 
-            "net_margin", "enterprise_value_ebitda_ttm", "earnings_per_share_basic_ttm"
-        ]
+            "name", "description", "close", "volume", "price_earnings_ttm", 
+            "price_book_ratio", "dividend_yield_recent", "return_on_equity", 
+            "return_on_invested_capital", "net_margin", "enterprise_value_ebitda_ttm", 
+            "earnings_per_share_basic_ttm"
+        ],
+        "sort": {"sortBy": "volume", "sortOrder": "desc"},
+        "range": [0, 500]
     }
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Content-Type": "application/json",
-        "Origin": "https://br.tradingview.com",
-        "Referer": "https://br.tradingview.com/"
+        "Content-Type": "application/json"
     }
     
     resultados = []
@@ -68,38 +62,43 @@ def obter_dados_base():
             ticker_completo = item.get("s", "")
             ticker = ticker_completo.split(":")[-1] if ":" in ticker_completo else ticker_completo
             
+            # Filtro básico para garantir que é uma ação (4, 5 ou 6 caracteres terminando em número)
+            if len(ticker) > 6 or len(ticker) < 4:
+                continue
+            
             val = item.get("d", [])
-            if not val or len(val) < 11:
+            if not val or len(val) < 12:
                 continue
                 
             def seguro(indice, padrao=0.0):
                 if val[indice] is None: return padrao
                 return float(val[indice])
 
-            preco = seguro(1)
-            if preco <= 0: continue
+            preco = seguro(2)
+            if preco <= 0.1: continue # Ignora centavos e dados corrompidos
             
-            volume = seguro(2)
-            pl = seguro(3, 12.0)
-            pvp = seguro(4, 1.5)
-            dy = seguro(5, 5.0) / 100.0
-            roe = seguro(6, 15.0) / 100.0
-            roic = seguro(7, 10.0) / 100.0
-            margem = seguro(8, 10.0) / 100.0
-            evebit = seguro(9, 8.0)
-            lpa = seguro(10, preco / pl if pl > 0 else 0)
+            # A coluna 1 traz a Razão Social real enviada pela B3
+            nome_empresa = val[1] if val[1] else f"Cia {ticker}"
+            
+            volume = seguro(3)
+            pl = seguro(4, 15.0)
+            pvp = seguro(5, 1.5)
+            dy = seguro(6, 0.0) / 100.0
+            roe = seguro(7, 0.0) / 100.0
+            roic = seguro(8, 0.0) / 100.0
+            margem = seguro(9, 0.0) / 100.0
+            evebit = seguro(10, 10.0)
+            lpa = seguro(11, preco / pl if pl > 0 else 0)
             vpa = preco / pvp if pvp > 0 else 0.0
             
             crescimento = 0.05 
             patrimonio = 5000000000.0
             divida_patrimonio = 0.4
-            
             liquidez = volume * preco
-            if liquidez < 100000: liquidez = 5000000.0
 
             resultados.append({
                 "ticker": ticker,
-                "nome": NOMES_B3.get(ticker, f"Cia {ticker}"),
+                "nome": nome_empresa,
                 "logo": f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png",
                 "preco": preco,
                 "pl": pl,
@@ -123,11 +122,11 @@ def obter_dados_base():
             df = df.fillna(0)
             _CACHE["df"] = df
             _CACHE["updated_at"] = agora
-            print(f"✅ [API] Sucesso! {len(df)} ações extraídas.")
+            print(f"✅ [API] Sucesso Máximo! {len(df)} ações da B3 extraídas.")
             return df.copy()
             
     except Exception as e:
-        print(f"🚨 [ERRO CRÍTICO] Falha na comunicação: {e}")
+        print(f"🚨 [ERRO CRÍTICO] Falha na comunicação geral: {e}")
         
     return pd.DataFrame()
 
@@ -167,7 +166,6 @@ def get_rankings():
 
     if df.empty: return jsonify([])
 
-    # MATEMÁTICA VETORIAL CORRIGIDA (O ERRO DO LOG ESTAVA AQUI)
     if metodo == "graham":
         df['valor_justo'] = df.apply(lambda r: np.sqrt(22.5 * r['lpa'] * r['vpa']) if r['lpa'] > 0 and r['vpa'] > 0 else 0, axis=1)
         df['potencial'] = (df['valor_justo'] - df['preco']) / df['preco'].replace(0, 1)
