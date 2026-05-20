@@ -7,3 +7,5 @@ yfinance==0.2.38
 lxml==5.2.1
 gunicorn==21.2.0
 cloudscraper==1.2.71
+lxml==4.9.3
+html5lib==1.1
