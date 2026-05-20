@@ -7,6 +7,7 @@ import yfinance as yf
 import warnings
 import time
 
+
 warnings.filterwarnings("ignore")
 app = Flask(__name__)
 CORS(app)
