@@ -227,19 +227,30 @@ def get_analise_completa():
 
     try:
         import yfinance as yf
-        df_yf = yf.download(ticker_input + '.SA', period=p_map.get(periodo_solicitado, "1y"), progress=False, ignore_tz=True)
+        
+        # Faz o download garantindo intervalo diário explícito
+        df_yf = yf.download(f"{ticker_input}.SA", period=p_map.get(periodo_solicitado, "1y"), interval="1d", progress=False)
+        
         if not df_yf.empty:
+            # Achatamento robusto de colunas (Previne erros do novo YFinance)
             if isinstance(df_yf.columns, pd.MultiIndex):
-                df_yf.columns = df_yf.columns.get_level_values(0)
+                df_yf.columns = [c[0] for c in df_yf.columns]
+                
             df_yf = df_yf.dropna(subset=['Close']).sort_index()
             
             fechamentos = [float(v) for v in df_yf['Close'].values]
             series_close = pd.Series(fechamentos)
+            
+            # Cálculo de RSI
             delta = series_close.diff()
             gain = delta.where(delta > 0, 0).rolling(14).mean()
             loss = -delta.where(delta < 0, 0).rolling(14).mean()
             rs = gain / loss.replace(0, np.nan)
             rsi = (100 - (100 / (1 + rs))).fillna(50).tolist()
+            
+            # CORREÇÃO PANDAS 2.2+: Usar .bfill() direto na Média Móvel
+            ma50 = series_close.rolling(window=min(50, len(series_close))).mean().bfill().tolist()
+            ma200 = series_close.rolling(window=min(200, len(series_close))).mean().bfill().tolist()
             
             chart_data = {
                 "dates": df_yf.index.strftime('%Y-%m-%d').tolist(),
@@ -249,11 +260,15 @@ def get_analise_completa():
                 "close": fechamentos,
                 "volume": [float(v) for v in df_yf['Volume'].values],
                 "rsi": rsi,
-                "ma50": series_close.rolling(min(50, len(series_close))).mean().fillna(method='bfill').tolist(),
-                "ma200": series_close.rolling(min(200, len(series_close))).mean().fillna(method='bfill').tolist()
+                "ma50": ma50,
+                "ma200": ma200
             }
-    except Exception:
-        pass 
+        else:
+            print(f"⚠️ [GRÁFICO] Yahoo Finance retornou vazio para {ticker_input}")
+            
+    except Exception as e:
+        print(f"🚨 [ERRO CRÍTICO NO GRÁFICO] {ticker_input}: {e}")
+        chart_data = None
 
     return jsonify({
         "ticker": ticker_input,
