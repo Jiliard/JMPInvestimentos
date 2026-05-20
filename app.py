@@ -11,9 +11,6 @@ warnings.filterwarnings("ignore")
 app = Flask(__name__)
 CORS(app)
 
-# CHAVE DA BRAPI PARA O GRÁFICO INDIVIDUAL
-BRAPI_TOKEN = "q6nberPzw9REsXXGDXPj1b"
-
 _CACHE = {"df": None, "updated_at": 0}
 CACHE_TTL = 900 # Salva em memória por 15 minutos
 
@@ -222,69 +219,79 @@ def get_analise_completa():
         "links": {"site_ri": site_ri, "relatorio_oficial": link_relatorio}
     }
 
-    # Mapeamento corrigido e otimizado para a API da Brapi
+    # Tradução do período
     p_map = {"30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"}
     range_api = p_map.get(periodo_solicitado, "1y")
     
-    # AJUSTE DINÂMICO DE INTERVALO: Evita que a API recuse períodos longos
+    # Para 5 e 10 anos, exige-se gráfico semanal para o pacote não quebrar
     intervalo_api = "1d"
     if range_api in ["5y", "10y"]:
-        intervalo_api = "1wk" # Se for 5 ou 10 anos, pede dados semanais para não estourar a API
+        intervalo_api = "1wk"
 
     chart_data = None
 
     try:
-        # Monta a URL com o range e o intervalo dinâmico calibrados
-        url_chart = f"https://brapi.dev/api/quote/{ticker_input}?range={range_api}&interval={intervalo_api}&token={BRAPI_TOKEN}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url_chart, headers=headers, timeout=10)
+        # ARQUITETURA DEFINITIVA: API RAW Yahoo Finance (V8)
+        # Ignora os bugs da biblioteca yfinance e o limite da Brapi
+        url_yahoo = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker_input}.SA?range={range_api}&interval={intervalo_api}"
+        headers_yahoo = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"}
         
-        if r.status_code == 200:
-            dados_json = r.json()
-            results = dados_json.get("results", [])
+        r_yahoo = requests.get(url_yahoo, headers=headers_yahoo, timeout=10)
+        
+        if r_yahoo.status_code == 200:
+            yahoo_json = r_yahoo.json()
+            res = yahoo_json.get("chart", {}).get("result", [])
             
-            if results and "historicalDataPrice" in results[0]:
-                hist = results[0]["historicalDataPrice"]
+            if res:
+                data = res[0]
+                timestamps = data.get("timestamp", [])
+                quote = data.get("indicators", {}).get("quote", [{}])[0]
                 
-                df_chart = pd.DataFrame(hist)
+                # Monta a tabela achatando os dados brutos e preenchendo os buracos
+                df_chart = pd.DataFrame({
+                    "date": pd.to_datetime(timestamps, unit="s"),
+                    "open": quote.get("open", []),
+                    "high": quote.get("high", []),
+                    "low": quote.get("low", []),
+                    "close": quote.get("close", []),
+                    "volume": quote.get("volume", [])
+                })
                 
-                if not df_chart.empty and 'close' in df_chart.columns:
-                    # Garante a conversão correta da data seja em Timestamp ou String
-                    try:
-                        df_chart['date'] = pd.to_datetime(df_chart['date'], unit='s').dt.strftime('%Y-%m-%d')
-                    except Exception:
-                        df_chart['date'] = pd.to_datetime(df_chart['date']).dt.strftime('%Y-%m-%d')
-                        
-                    # Preenche valores nulos pontuais (caso a API falhe em algum dia específico)
-                    df_chart = df_chart.ffill().bfill()
-                    series_close = df_chart['close']
-                    
-                    # Matemática do RSI (Índice de Força Relativa)
-                    delta = series_close.diff()
-                    gain = delta.where(delta > 0, 0).rolling(window=min(14, len(series_close))).mean()
-                    loss = -delta.where(delta < 0, 0).rolling(window=min(14, len(series_close))).mean()
-                    rs = gain / loss.replace(0, np.nan)
-                    rsi = (100 - (100 / (1 + rs))).fillna(50).tolist()
-                    
-                    # Matemática das Médias Móveis (MA50 e MA200) com bfill corrigido para Pandas 2.2+
-                    ma50 = series_close.rolling(window=min(50, len(series_close))).mean().bfill().tolist()
-                    ma200 = series_close.rolling(window=min(200, len(series_close))).mean().bfill().tolist()
-                    
-                    chart_data = {
-                        "dates": df_chart['date'].tolist(),
-                        "open": [float(v) for v in df_chart['open'].values],
-                        "high": [float(v) for v in df_chart['high'].values],
-                        "low": [float(v) for v in df_chart['low'].values],
-                        "close": [float(v) for v in df_chart['close'].values],
-                        "volume": [float(v) for v in df_chart.get('volume', pd.Series([0]*len(df_chart))).values],
-                        "rsi": rsi,
-                        "ma50": ma50,
-                        "ma200": ma200
-                    }
-            else:
-                print(f"⚠️ [GRÁFICO] Estrutura 'historicalDataPrice' ausente na Brapi para {ticker_input}")
+                # Converte para texto pro site aceitar
+                df_chart["date"] = df_chart["date"].dt.strftime("%Y-%m-%d")
+                
+                # Corrige nulos nos feriados
+                df_chart = df_chart.ffill().bfill()
+                
+                series_close = df_chart['close']
+                
+                # Matemática Financeira Clássica
+                delta = series_close.diff()
+                gain = delta.where(delta > 0, 0).rolling(window=min(14, len(series_close))).mean()
+                loss = -delta.where(delta < 0, 0).rolling(window=min(14, len(series_close))).mean()
+                rs = gain / loss.replace(0, np.nan)
+                rsi = (100 - (100 / (1 + rs))).fillna(50).tolist()
+                
+                ma50 = series_close.rolling(window=min(50, len(series_close))).mean().bfill().tolist()
+                ma200 = series_close.rolling(window=min(200, len(series_close))).mean().bfill().tolist()
+                
+                # Garante que nenhum 'NaN' chegue ao JSON
+                def limpa_nulos(lista):
+                    return [float(x) if pd.notnull(x) else 0.0 for x in lista]
+
+                chart_data = {
+                    "dates": df_chart['date'].tolist(),
+                    "open": limpa_nulos(df_chart['open']),
+                    "high": limpa_nulos(df_chart['high']),
+                    "low": limpa_nulos(df_chart['low']),
+                    "close": limpa_nulos(df_chart['close']),
+                    "volume": limpa_nulos(df_chart['volume']),
+                    "rsi": limpa_nulos(rsi),
+                    "ma50": limpa_nulos(ma50),
+                    "ma200": limpa_nulos(ma200)
+                }
         else:
-            print(f"🚨 [GRÁFICO] Brapi retornou Status {r.status_code} para {ticker_input}")
+            print(f"🚨 [GRÁFICO] Yahoo RAW API retornou {r_yahoo.status_code} para {ticker_input}")
             
     except Exception as e:
         print(f"🚨 [ERRO CRÍTICO NO GRÁFICO] {ticker_input}: {e}")
