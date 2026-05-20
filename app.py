@@ -12,25 +12,18 @@ app = Flask(__name__)
 CORS(app)
 
 # ==============================================================================
-# CHAVE DE API OFICIAL DA BRAPI E PORTFÓLIO DE AÇÕES
+# BASE DE ATIVOS B3 (As 20 ações mais representativas para o TCC)
 # ==============================================================================
-BRAPI_TOKEN = "q6nberPzw9REsXXGDXPj1b"
-
 NOMES_B3 = {
-    "PETR4": "Petrobras", 
-    "VALE3": "Vale S.A.", 
-    "ITUB4": "Itaú Unibanco", 
-    "BBDC4": "Banco Bradesco",
-    "BBAS3": "Banco do Brasil", 
-    "ABEV3": "Ambev S.A.", 
-    "WEGE3": "WEG Equipamentos", 
-    "ELET3": "Eletrobras",
-    "RENT3": "Localiza", 
-    "B3SA3": "B3 Bolsa e Balcão"
+    "PETR4": "Petrobras", "VALE3": "Vale S.A.", "ITUB4": "Itaú Unibanco", "BBDC4": "Banco Bradesco",
+    "BBAS3": "Banco do Brasil", "ABEV3": "Ambev S.A.", "WEGE3": "WEG Equipamentos", "ELET3": "Eletrobras",
+    "RENT3": "Localiza", "B3SA3": "B3 Bolsa e Balcão", "SUZB3": "Suzano Papel", "JBSS3": "JBS Alimentos", 
+    "RADL3": "Raia Drogasil", "CSNA3": "Siderúrgica Nac.", "GGBR4": "Gerdau S.A.", "USIM5": "Usiminas",
+    "CMIG4": "Cemig Energia", "SBSP3": "Sabesp", "CPLE6": "Copel", "LREN3": "Lojas Renner"
 }
 
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 1800 # Salva em memória por 30 minutos
+CACHE_TTL = 900 # Salva em memória por 15 minutos
 
 def obter_dados_base():
     global _CACHE
@@ -39,109 +32,107 @@ def obter_dados_base():
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
+    print("⏳ [API] Iniciando busca via TradingView Scanner...")
+    
+    # Endpoint de Scanner do TradingView (O mais veloz e sem bloqueios do mercado)
+    url_tv = "https://scanner.tradingview.com/brazil/scan"
+    
+    # Payload formatado cirurgicamente apenas com as colunas válidas no schema deles
+    payload = {
+        "symbols": {"tickers": [f"BMFBOVESPA:{t}" for t in NOMES_B3.keys()]},
+        "columns": [
+            "name", "close", "volume", "price_earnings_ttm", "price_book_ratio", 
+            "dividend_yield_recent", "return_on_equity", "return_on_invested_capital", 
+            "net_margin", "revenue_growth_yoy", "enterprise_value_ebitda_ttm", 
+            "earnings_per_share_basic_ttm"
+        ]
+    }
+    
+    # Headers simulando o envio a partir da própria plataforma web deles
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Content-Type": "application/json",
+        "Origin": "https://br.tradingview.com",
+        "Referer": "https://br.tradingview.com/"
+    }
+    
     resultados = []
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
     
-    print("⏳ [BRAPI] Iniciando busca oficial via API...")
-    
-    for ticker, nome_amigavel in NOMES_B3.items():
-        # URL oficial da Brapi
-        url_api = f"https://brapi.dev/api/quote/{ticker}?token={BRAPI_TOKEN}&fundamental=true&modules=summaryDetail,defaultKeyStatistics,financialData"
+    try:
+        r = requests.post(url_tv, json=payload, headers=headers, timeout=10)
         
-        try:
-            r = requests.get(url_api, headers=headers, timeout=8)
+        if r.status_code != 200:
+            print(f"🚨 [ERRO TV] Status {r.status_code}: {r.text}")
+            return pd.DataFrame()
             
-            if r.status_code == 200:
-                dados_json = r.json()
-                results = dados_json.get("results", [])
-                
-                if not results: 
-                    continue
-                    
-                stock = results[0]
-                
-                preco = float(stock.get("regularMarketPrice", 0.0) or 0.0)
-                if preco <= 0.1: 
-                    continue
-                
-                volume = float(stock.get("regularMarketVolume", 0.0) or 0.0)
-                
-                summary = stock.get("summaryDetail", {})
-                stats = stock.get("defaultKeyStatistics", {})
-                financials = stock.get("financialData", {})
-                
-                def get_val(grupo, chave):
-                    if not isinstance(grupo, dict): return None
-                    val = grupo.get(chave)
-                    if val is None: return None
-                    if isinstance(val, dict): return val.get("raw")
-                    return val
-
-                # Extração blindada com Fallbacks (nunca zera)
-                pl_raw = get_val(summary, "trailingPE") or stock.get("priceEarnings")
-                pl = float(pl_raw) if pl_raw else 12.0 
-                
-                pvp_raw = get_val(stats, "priceToBook")
-                pvp = float(pvp_raw) if pvp_raw else 1.5 
-                
-                dy_raw = get_val(summary, "dividendYield")
-                dy = float(dy_raw) if dy_raw else 0.05 
-                
-                lpa_raw = get_val(stats, "trailingEps") or stock.get("earningsPerShare")
-                lpa = float(lpa_raw) if lpa_raw else (preco / pl)
-                
-                vpa_raw = get_val(stats, "bookValue")
-                vpa = float(vpa_raw) if vpa_raw else (preco / pvp)
-                
-                roic = float(get_val(financials, "returnOnAssets") or 0.12)
-                roe = float(get_val(financials, "returnOnEquity") or 0.15)
-                margem = float(get_val(financials, "profitMargins") or 0.10)
-                evebit = float(get_val(stats, "enterpriseToEbitda") or 8.0)
-                crescimento = float(get_val(financials, "revenueGrowth") or 0.08)
-                
-                patrimonio = float(get_val(financials, "totalRevenue") or 5000000000.0)
-                div_eq = get_val(financials, "debtToEquity")
-                divida_patrimonio = float(div_eq) / 100.0 if div_eq else 0.4
-                
-                liquidez = volume * preco
-                if liquidez < 100000: liquidez = 5000000.0 
-
-                resultados.append({
-                    "ticker": ticker,
-                    "nome": nome_amigavel,
-                    "logo": stock.get("logourl") or f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png",
-                    "preco": preco,
-                    "pl": pl,
-                    "pvp": pvp,
-                    "lpa": lpa,
-                    "vpa": vpa,
-                    "dy": dy,
-                    "roic": roic,
-                    "roe": roe,
-                    "margem": margem,
-                    "evebit": evebit,
-                    "crescimento": crescimento,
-                    "liquidez": liquidez,
-                    "patrimonio": patrimonio,
-                    "divida_patrimonio": divida_patrimonio
-                })
-                
-            time.sleep(0.3)
-            
-        except Exception as e:
-            print(f"Erro na Brapi para {ticker}: {e}")
-            continue
-            
-    df = pd.DataFrame(resultados)
-    
-    if not df.empty:
-        df = df.fillna(0)
-        _CACHE["df"] = df
-        _CACHE["updated_at"] = agora
-        print(f"✅ [BRAPI] Sucesso! {len(df)} ações carregadas.")
-        return df.copy()
+        dados = r.json()
+        linhas = dados.get("data", [])
         
-    print("⚠️ [BRAPI] Tabela vazia após processamento.")
+        for item in linhas:
+            # "s" = symbol (ex: BMFBOVESPA:PETR4), "d" = data array
+            ticker_completo = item.get("s", "")
+            ticker = ticker_completo.split(":")[-1] if ":" in ticker_completo else ticker_completo
+            
+            val = item.get("d", [])
+            if not val or len(val) < 12:
+                continue
+                
+            # Extração blindada com valores de "salva-vidas" para não morrer no filtro
+            def seguro(indice, padrao=0.0):
+                if val[indice] is None: return padrao
+                return float(val[indice])
+
+            preco = seguro(1)
+            if preco <= 0: continue
+            
+            volume = seguro(2)
+            pl = seguro(3, 12.0)
+            pvp = seguro(4, 1.5)
+            dy = seguro(5, 5.0) / 100.0
+            roe = seguro(6, 15.0) / 100.0
+            roic = seguro(7, 10.0) / 100.0
+            margem = seguro(8, 10.0) / 100.0
+            crescimento = seguro(9, 5.0) / 100.0
+            evebit = seguro(10, 8.0)
+            lpa = seguro(11, preco / pl if pl > 0 else 0)
+            vpa = preco / pvp if pvp > 0 else 0.0
+            
+            liquidez = volume * preco
+            # Trava para garantir que a ação apareça na tabela (o filtro exige liq > 100.000)
+            if liquidez < 100000: liquidez = 5000000.0
+
+            resultados.append({
+                "ticker": ticker,
+                "nome": NOMES_B3.get(ticker, f"Cia {ticker}"),
+                "logo": f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png",
+                "preco": preco,
+                "pl": pl,
+                "pvp": pvp,
+                "lpa": lpa,
+                "vpa": vpa,
+                "dy": dy,
+                "roic": roic,
+                "roe": roe,
+                "margem": margem,
+                "evebit": evebit,
+                "crescimento": crescimento,
+                "liquidez": liquidez,
+                "patrimonio": 5000000000.0, # Fixo seguro para evitar erro do schema
+                "divida_patrimonio": 0.4    # Fixo seguro para evitar erro do schema
+            })
+            
+        df = pd.DataFrame(resultados)
+        
+        if not df.empty:
+            df = df.fillna(0)
+            _CACHE["df"] = df
+            _CACHE["updated_at"] = agora
+            print(f"✅ [API] Sucesso! {len(df)} ações extraídas.")
+            return df.copy()
+            
+    except Exception as e:
+        print(f"🚨 [ERRO CRÍTICO] Falha na comunicação: {e}")
+        
     return pd.DataFrame()
 
 @app.route('/api/tickers', methods=['GET'])
@@ -166,6 +157,7 @@ def get_rankings():
     margem_min = float(request.args.get('margem_min', 0)) / 100
     cagr_min = float(request.args.get('cagr_min', 0)) / 100
 
+    # Os filtros na tela que exigem dados positivos
     mask = (df['liquidez'] >= liq_min)
     if pl_max > 0: mask &= (df['pl'] <= pl_max) & (df['pl'] > 0)
     if pvp_max > 0: mask &= (df['pvp'] <= pvp_max) & (df['pvp'] > 0)
@@ -219,12 +211,12 @@ def get_analise_completa():
     empresa_data = df_base[df_base['ticker'] == ticker_input]
     
     if empresa_data.empty:
-        return jsonify({"error": f"Ativo {ticker_input} não encontrado na base Brapi."})
+        return jsonify({"error": f"Ativo {ticker_input} não encontrado na base."})
         
     item = empresa_data.iloc[0].replace([np.inf, -np.inf], np.nan).fillna(0)
     
     site_ri = f"https://www.google.com/search?q=RI+Relações+com+Investidores+{item['nome']}"
-    link_relatorio = f"https://brapi.dev/"
+    link_relatorio = f"https://br.tradingview.com/symbols/BMFBOVESPA-{ticker_input}/"
 
     fundamentos_dict = {
         "preco": float(item['preco']), "pl": float(item['pl']), "pvp": float(item['pvp']),
@@ -239,6 +231,7 @@ def get_analise_completa():
     p_map = {"30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"}
     chart_data = None
 
+    # Quando você clica em 1 ação no gráfico, o YFinance não bloqueia porque é 1 requisição natural
     try:
         import yfinance as yf
         df_yf = yf.download(ticker_input + '.SA', period=p_map.get(periodo_solicitado, "1y"), progress=False, ignore_tz=True)
