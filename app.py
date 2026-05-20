@@ -2,8 +2,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import pandas as pd
 import numpy as np
-import requests
 import yfinance as yf
+import requests
 import warnings
 import time
 
@@ -12,19 +12,34 @@ warnings.filterwarnings("ignore")
 app = Flask(__name__)
 CORS(app)
 
+# CHAVE DE API OFICIAL DA BRAPI (Configurada com o seu Token)
+BRAPI_TOKEN = "q6nberPzw9REsXXGDXPj1b"
+
 # ==============================================================================
-# BASE DE ATIVOS B3 (Amostragem Ouro - As 15 gigantes da bolsa)
+# BASE DE TRADUÇÃO DE NOMES DA B3
 # ==============================================================================
 NOMES_B3 = {
-    "PETR4": "Petrobras", "VALE3": "Vale S.A.", "ITUB4": "Itaú Unibanco", 
-    "BBDC4": "Banco Bradesco", "BBAS3": "Banco do Brasil", "ABEV3": "Ambev S.A.", 
-    "WEGE3": "WEG Equip.", "ELET3": "Eletrobras", "RENT3": "Localiza", 
-    "B3SA3": "B3", "SUZB3": "Suzano", "JBSS3": "JBS", 
-    "RADL3": "Raia Drogasil", "CSNA3": "Siderúrgica Nac.", "GGBR4": "Gerdau"
+    "PETR": "Petrobras", "VALE": "Vale S.A.", "ITUB": "Itaú Unibanco", "BBDC": "Banco Bradesco",
+    "BBAS": "Banco do Brasil", "ABEV": "Ambev S.A.", "WEGE": "WEG Equipamentos", "ELET": "Eletrobras",
+    "RENT": "Localiza Rent a Car", "B3SA": "B3 Bolsa e Balcão", "SUZB": "Suzano Papel", "RDOR": "Rede D'Or São Luiz",
+    "RADL": "Raia Drogasil", "CSNA": "Siderúrgica Nacional", "GGBR": "Gerdau S.A.", "USIM": "Usiminas",
+    "JBSS": "JBS Alimentos", "MRFG": "Marfrig Global", "BEEF": "Minerva Foods", "CMIG": "Cemig Energia",
+    "SBSP": "Sabesp Saneamento", "CPLE": "Copel Energia", "ENEV": "Eneva Geração", "EGIE": "Engie Brasil",
+    "CCRO": "Grupo CCR", "GOAU": "Metalúrgica Gerdau", "KLBN": "Klabin Celulose", "CYRE": "Cyrela Empreendimentos",
+    "MRVE": "MRV Engenharia", "EZTC": "EZTEC Construtora", "LREN": "Lojas Renner", "MGLU": "Magazine Luiza",
+    "ASAI": "Assaí Atacadista", "CRFB": "Carrefour Brasil", "NTCO": "Natura &Co", "TIMS": "TIM Brasil",
+    "VIVT": "Telefônica Brasil (Vivo)", "HYPE": "Hypera Pharma", "FLRY": "Grupo Fleury", "TOTS": "Totvs Tecnologia",
+    "CSAN": "Cosan S.A.", "RAIZ": "Raízen Energia", "VBBR": "Vibra Energia", "UGPA": "Ultrapar Participações",
+    "BRKM": "Braskem Química", "CIEL": "Cielo S.A.", "PSSA": "Porto Seguro", "BBSE": "BB Seguridade",
+    "CXSE": "Caixa Seguridade", "MDIA": "M. Dias Branco", "SMTO": "São Martinho", "SLCE": "SLC Agrícola",
+    "ALOS": "Allos Shoppings", "IGTI": "Iguatemi S.A.", "MULT": "Multiplan Empreendimentos", "TAEE": "Taesa Transmissão",
+    "TRPL": "ISA CTEEP", "SANB": "Banco Santander", "BPAC": "BTG Pactual", "PRIO": "Prio Petróleo",
+    "RECV": "PetroRecôncavo", "SOMA": "Grupo Soma", "ARZZ": "Arezzo&Co", "CVCB": "CVC Viagens",
+    "GOLL": "Gol Linhas Aéreas", "AZUL": "Azul Linhas Aéreas", "EMBR": "Embraer Aviação", "POMO": "Marcopolo"
 }
 
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 1800 # Salva os dados na memória por 30 minutos
+CACHE_TTL = 1800 # Cache de 30 minutos em memória para alta performance
 
 def obter_dados_base():
     global _CACHE
@@ -33,93 +48,89 @@ def obter_dados_base():
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    resultados = []
+    # Endpoint da Brapi que lista todas as ações brasileiras com múltiplos e fundamentos
+    url_api = f"https://brapi.dev/api/quote/list?token={BRAPI_TOKEN}"
     
-    # Cabeçalho limpo simulando um navegador moderno
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json"
-    }
-
-    # ARQUITETURA "SNIPER": Bate na API nativa do Yahoo Finance sequencialmente.
-    # 15 ações x 0.5s de atraso = 7.5 segundos de processamento (Longe do Timeout de 30s do Render e sem Erro 429).
-    for ticker, nome in NOMES_B3.items():
-        url_api = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ticker}.SA?modules=summaryDetail,defaultKeyStatistics,financialData"
+    try:
+        r = requests.get(url_api, timeout=15)
         
-        try:
-            r = requests.get(url_api, headers=headers, timeout=5)
+        if r.status_code != 200:
+            print(f"Erro na API Brapi. Status: {r.status_code}")
+            return pd.DataFrame()
             
-            if r.status_code == 200:
-                json_data = r.json()
-                res = json_data.get('quoteSummary', {}).get('result', [])
-                if not res:
-                    continue
-                    
-                data = res[0]
-                summary = data.get('summaryDetail', {})
-                stats = data.get('defaultKeyStatistics', {})
-                financials = data.get('financialData', {})
-
-                # Função auxiliar para extrair o valor "raw" com segurança
-                def get_raw(grupo, campo, padrao=0.0):
-                    return grupo.get(campo, {}).get('raw', padrao)
-
-                preco = get_raw(financials, 'currentPrice') or get_raw(summary, 'previousClose')
-                if not preco: 
-                    continue
-
-                pl = get_raw(summary, 'trailingPE')
-                pvp = get_raw(stats, 'priceToBook')
-                dy = get_raw(summary, 'dividendYield')
-                roic = get_raw(financials, 'returnOnAssets') # Proxy para ROIC
-                roe = get_raw(financials, 'returnOnEquity')
-                margem = get_raw(financials, 'profitMargins')
-                evebit = get_raw(stats, 'enterpriseToEbitda')
-                crescimento = get_raw(financials, 'revenueGrowth')
-                lpa = get_raw(stats, 'trailingEps')
-                vpa = get_raw(stats, 'bookValue')
-                volume = get_raw(summary, 'volume')
+        dados_json = r.json()
+        lista_stocks = dados_json.get("stocks", [])
+        
+        df_raw = pd.DataFrame(lista_stocks)
+        if df_raw.empty:
+            return pd.DataFrame()
+            
+        resultados = []
+        
+        for _, stock in df_raw.iterrows():
+            ticker = stock.get('stock', '')
+            
+            # Filtro para ignorar opções ou tickers inválidos (Mantém apenas ações de 4 a 6 caracteres)
+            if not ticker or len(ticker) < 4 or len(ticker) > 6:
+                continue
                 
-                div_eq = get_raw(financials, 'debtToEquity')
-                divida_patrimonio = div_eq / 100.0 if div_eq else 0.0
-
-                resultados.append({
-                    'ticker': ticker,
-                    'nome': nome,
-                    'logo': f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png",
-                    'preco': float(preco),
-                    'pl': float(pl),
-                    'pvp': float(pvp),
-                    'lpa': float(lpa) if lpa > 0 else float(preco/pl if pl > 0 else 0),
-                    'vpa': float(vpa) if vpa > 0 else float(preco/pvp if pvp > 0 else 0),
-                    'dy': float(dy),
-                    'roic': float(roic),
-                    'roe': float(roe),
-                    'margem': float(margem),
-                    'evebit': float(evebit),
-                    'crescimento': float(crescimento),
-                    'liquidez': float(volume * preco),
-                    'patrimonio': float(get_raw(financials, 'totalRevenue')),
-                    'divida_patrimonio': float(divida_patrimonio)
-                })
-
-            # O Segredo contra o Bloqueio: Respira por meio segundo antes de pedir a próxima ação
-            time.sleep(0.5)
-
-        except Exception as e:
-            print(f"Erro na extração via API para {ticker}: {e}")
-            continue
-
-    df = pd.DataFrame(resultados)
-    
-    if df.empty:
-        return pd.DataFrame()
-
-    df = df.fillna(0)
-    
-    _CACHE["df"] = df
-    _CACHE["updated_at"] = agora
-    return df.copy()
+            # Extração limpa e mapeamento de chaves numéricas tratadas contra valores nulos (None)
+            preco = float(stock.get('close', 0.0) or 0.0)
+            if preco <= 0:
+                continue
+                
+            # Múltiplos diretos vindos da API oficial
+            pl = float(stock.get('pe', 0.0) or 0.0)
+            pvp = float(stock.get('pb', 0.0) or 0.0)
+            dy = float(stock.get('dividendYield', 0.0) or 0.0) / 100.0 # Transforma ex: 5.4% em 0.054
+            
+            # Métricas de eficiência baseadas no histórico financeiro mapeado pela Brapi
+            # Nota: ROA/ROE costumam vir em porcentagem simples na Brapi (ex: 15.2 para 15.2%)
+            roe = float(stock.get('roe', 0.0) or 0.0) / 100.0
+            roic = float(stock.get('roic', 0.0) or 0.0) / 100.0
+            margem = float(stock.get('netProfitMargin', 0.0) or 0.0) / 100.0
+            
+            # Indicadores de crescimento e volume financeiro
+            volume = float(stock.get('volume', 0.0) or 0.0)
+            liquidez = volume * preco
+            crescimento = float(stock.get('revenueGrowth3Y', 0.0) or 0.0) / 100.0 # Crescimento composto aproximado
+            evebit = float(stock.get('enterpriseValueEbitda', 0.0) or 0.0)
+            
+            # Cálculo matemático reverso para gerar LPA e VPA com base no preço real e múltiplos de mercado
+            lpa = preco / pl if pl > 0 else 0.0
+            vpa = preco / pvp if pvp > 0 else 0.0
+            
+            resultados.append({
+                'ticker': ticker,
+                'nome': NOMES_B3.get(ticker[:4], stock.get('name', f"Companhia {ticker}")),
+                'logo': stock.get('logo', f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png"),
+                'preco': preco,
+                'pl': pl,
+                'pvp': pvp,
+                'lpa': lpa,
+                'vpa': vpa,
+                'dy': dy,
+                'roic': roic,
+                'roe': roe,
+                'margem': margem,
+                'evebit': evebit,
+                'crescimento': crescimento,
+                'liquidez': liquidez,
+                'patrimonio': float(stock.get('marketCap', 0.0) or 0.0), # Mapeia Valor de Mercado como proxy de tamanho
+                'divida_patrimonio': 0.0 # Brapi não traz Dívida Líquida no endpoint de lista comum
+            })
+            
+        df = pd.DataFrame(resultados)
+        if not df.empty:
+            df = df.fillna(0)
+            _CACHE["df"] = df
+            _CACHE["updated_at"] = agora
+            return df.copy()
+            
+    except Exception as e:
+        print(f"Erro crítico no processamento da API Brapi: {e}")
+        
+    return pd.DataFrame()
 
 @app.route('/api/tickers', methods=['GET'])
 def get_tickers():
@@ -196,12 +207,12 @@ def get_analise_completa():
     empresa_data = df_base[df_base['ticker'] == ticker_input]
     
     if empresa_data.empty:
-        return jsonify({"error": f"Ativo {ticker_input} não encontrado na base."})
+        return jsonify({"error": f"Ativo {ticker_input} não encontrado na base de dados oficial."})
         
     item = empresa_data.iloc[0].replace([np.inf, -np.inf], np.nan).fillna(0)
     
     site_ri = f"https://www.google.com/search?q=RI+Relações+com+Investidores+{item['nome']}"
-    link_relatorio = f"https://br.financas.yahoo.com/quote/{ticker_input}.SA/key-statistics"
+    link_relatorio = f"https://brapi.dev/dashboard"
 
     fundamentos_dict = {
         "preco": float(item['preco']), "pl": float(item['pl']), "pvp": float(item['pvp']),
@@ -217,7 +228,7 @@ def get_analise_completa():
     chart_data = None
 
     try:
-        # Gráfico Real Time direto no yfinance (seguro pois é uma única ação por vez)
+        # Consulta ao yfinance mantida isolada para o gráfico histórico do ativo (Sem riscos de Rate Limit por ser unitário)
         df_yf = yf.download(ticker_input + '.SA', period=p_map.get(periodo_solicitado, "1y"), progress=False, ignore_tz=True)
         if not df_yf.empty:
             if isinstance(df_yf.columns, pd.MultiIndex):
