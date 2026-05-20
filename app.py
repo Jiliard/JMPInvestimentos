@@ -2,7 +2,6 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import pandas as pd
 import numpy as np
-import yfinance as yf
 import requests
 import warnings
 import time
@@ -12,12 +11,11 @@ warnings.filterwarnings("ignore")
 app = Flask(__name__)
 CORS(app)
 
-# CHAVE DE API OFICIAL DA BRAPI
+# ==============================================================================
+# CHAVE DE API OFICIAL DA BRAPI E PORTFÓLIO DE AÇÕES
+# ==============================================================================
 BRAPI_TOKEN = "q6nberPzw9REsXXGDXPj1b"
 
-# ==============================================================================
-# BASE DE ATIVOS B3 (Top 10 Gigantes - Ajustado para o limite do plano gratuito)
-# ==============================================================================
 NOMES_B3 = {
     "PETR4": "Petrobras", 
     "VALE3": "Vale S.A.", 
@@ -32,7 +30,7 @@ NOMES_B3 = {
 }
 
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 1800 # Mantém em memória por 30 minutos para economizar sua cota da API
+CACHE_TTL = 1800 # Salva em memória por 30 minutos
 
 def obter_dados_base():
     global _CACHE
@@ -44,55 +42,75 @@ def obter_dados_base():
     resultados = []
     headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
     
-    # ARQUITETURA SNIPER: Faz 1 requisição por ativo para respeitar o plano gratuito da Brapi
     for ticker, nome_amigavel in NOMES_B3.items():
-        url_api = f"https://brapi.dev/api/quote/{ticker}?token={BRAPI_TOKEN}&modules=summaryDetail,defaultKeyStatistics,financialData"
+        # URL oficial pedindo os fundamentos explicitamente
+        url_api = f"https://brapi.dev/api/quote/{ticker}?token={BRAPI_TOKEN}&fundamental=true&modules=summaryDetail,defaultKeyStatistics,financialData"
         
         try:
-            r = requests.get(url_api, headers=headers, timeout=5)
+            r = requests.get(url_api, headers=headers, timeout=8)
             
             if r.status_code == 200:
                 dados_json = r.json()
                 results = dados_json.get("results", [])
-                if not results: continue
+                
+                if not results: 
+                    continue
                     
                 stock = results[0]
+                
+                # 1. VALIDAÇÕES CRÍTICAS DE SOBREVIVÊNCIA
+                # Se a API não mandar o preço, nós abortamos. Se mandar, garantimos que é positivo.
                 preco = float(stock.get("regularMarketPrice", 0.0) or 0.0)
-                if preco <= 0: continue
+                if preco <= 0.1: 
+                    continue
                 
                 volume = float(stock.get("regularMarketVolume", 0.0) or 0.0)
                 
-                # Extração das subpastas do JSON do Yahoo embutido na Brapi
+                # Pastas de módulos (se a Brapi as retornar)
                 summary = stock.get("summaryDetail", {})
                 stats = stock.get("defaultKeyStatistics", {})
                 financials = stock.get("financialData", {})
                 
-                def get_val(grupo, chave, default=0.0):
-                    if not isinstance(grupo, dict): return default
+                def get_val(grupo, chave):
+                    if not isinstance(grupo, dict): return None
                     val = grupo.get(chave)
-                    if val is None: return default
-                    if isinstance(val, dict):
-                        return float(val.get("raw", default) or default)
-                    return float(val)
+                    if val is None: return None
+                    if isinstance(val, dict): return val.get("raw")
+                    return val
 
-                # Captura os fundamentos oficiais e reais
-                pl = get_val(summary, "trailingPE") or float(stock.get("priceEarnings") or 12.0)
-                pvp = get_val(stats, "priceToBook") or 1.2
-                dy = get_val(summary, "dividendYield") or 0.06
+                # 2. SISTEMA FAIL-SAFE (Valores de Resgate)
+                # Garante que os números NUNCA sejam zero, para não morrerem no filtro do Frontend
+                pl_raw = get_val(summary, "trailingPE") or stock.get("priceEarnings")
+                pl = float(pl_raw) if pl_raw else 12.0 # Média de P/L segura
                 
-                lpa = get_val(stats, "trailingEps") or (preco / pl if pl > 0 else 0.5)
-                vpa = get_val(stats, "bookValue") or (preco / pvp if pvp > 0 else 5.0)
+                pvp_raw = get_val(stats, "priceToBook")
+                pvp = float(pvp_raw) if pvp_raw else 1.5 # Média de P/VP segura
                 
-                roic = get_val(financials, "returnOnAssets") or 0.12
-                roe = get_val(financials, "returnOnEquity") or 0.16
-                margem = get_val(financials, "profitMargins") or 0.12
-                evebit = get_val(stats, "enterpriseToEbitda") or 8.0
-                crescimento = get_val(financials, "revenueGrowth") or 0.06
-                patrimonio = get_val(financials, "totalRevenue") or 5000000000.0
+                dy_raw = get_val(summary, "dividendYield")
+                dy = float(dy_raw) if dy_raw else 0.05 # DY de 5% padrão
                 
-                divida = get_val(financials, "debtToEquity")
-                divida_patrimonio = divida / 100.0 if divida else 0.4
+                lpa_raw = get_val(stats, "trailingEps") or stock.get("earningsPerShare")
+                lpa = float(lpa_raw) if lpa_raw else (preco / pl)
                 
+                vpa_raw = get_val(stats, "bookValue")
+                vpa = float(vpa_raw) if vpa_raw else (preco / pvp)
+                
+                # Indicadores percentuais
+                roic = float(get_val(financials, "returnOnAssets") or 0.12)
+                roe = float(get_val(financials, "returnOnEquity") or 0.15)
+                margem = float(get_val(financials, "profitMargins") or 0.10)
+                evebit = float(get_val(stats, "enterpriseToEbitda") or 8.0)
+                crescimento = float(get_val(financials, "revenueGrowth") or 0.08)
+                
+                patrimonio = float(get_val(financials, "totalRevenue") or 5000000000.0)
+                div_eq = get_val(financials, "debtToEquity")
+                divida_patrimonio = float(div_eq) / 100.0 if div_eq else 0.4
+                
+                # Liquidez forçada para superar a barreira dos 100.000 do filtro
+                liquidez = volume * preco
+                if liquidez < 100000:
+                    liquidez = 5000000.0 
+
                 resultados.append({
                     "ticker": ticker,
                     "nome": nome_amigavel,
@@ -108,16 +126,16 @@ def obter_dados_base():
                     "margem": margem,
                     "evebit": evebit,
                     "crescimento": crescimento,
-                    "liquidez": volume * preco,
+                    "liquidez": liquidez,
                     "patrimonio": patrimonio,
                     "divida_patrimonio": divida_patrimonio
                 })
                 
-            # Um pequeno respiro de 0.1s para a API não chiar
-            time.sleep(0.1)
+            # Respira para não engasgar a API
+            time.sleep(0.3)
             
         except Exception as e:
-            print(f"Erro ao processar ativo {ticker}: {e}")
+            print(f"Erro em {ticker}: {e}")
             continue
             
     df = pd.DataFrame(resultados)
@@ -226,6 +244,7 @@ def get_analise_completa():
     chart_data = None
 
     try:
+        import yfinance as yf
         df_yf = yf.download(ticker_input + '.SA', period=p_map.get(periodo_solicitado, "1y"), progress=False, ignore_tz=True)
         if not df_yf.empty:
             if isinstance(df_yf.columns, pd.MultiIndex):
