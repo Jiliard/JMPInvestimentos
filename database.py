@@ -5,7 +5,7 @@ from datetime import datetime
 
 # URL da Nuvem (Supabase) via Pooler
 # Coloque a sua URL com a senha real aqui
-URL_PADRAO = "postgresql://postgres.mhyeccidsziqeqvsmryj:HB6C8pfwOpotari7@aws-1-us-west-2.pooler.supabase.com:5432/postgres"
+URL_PADRAO = "postgresql://postgres.mhyeccidsziqeqvsmryj:HB6C8pfwOpotari7@aws-0-us-west-2.pooler.supabase.com:6543/postgres?pgbouncer=true"
 URL_BANCO_NUVEM = os.getenv("DATABASE_URL", URL_PADRAO)
 
 def conectar_banco():
