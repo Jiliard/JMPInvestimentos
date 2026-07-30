@@ -6,10 +6,16 @@ import requests
 import warnings
 import time
 
+# Módulo de persistência SQLite
+import database
+
 warnings.filterwarnings("ignore")
 
 app = Flask(__name__)
 CORS(app)
+
+# Inicializa a estrutura do banco SQLite ao ligar o servidor
+database.inicializar_banco()
 
 _CACHE = {"df": None, "updated_at": 0}
 CACHE_TTL = 900 # Salva em memória por 15 minutos
@@ -31,10 +37,21 @@ def obter_dados_base():
             {"left": "type", "operation": "equal", "right": "stock"}
         ],
         "columns": [
-            "name", "description", "close", "volume", "price_earnings_ttm", 
-            "price_book_ratio", "dividend_yield_recent", "return_on_equity", 
-            "return_on_invested_capital", "net_margin", "enterprise_value_ebitda_ttm", 
-            "earnings_per_share_basic_ttm"
+            "name",                             # 0
+            "description",                      # 1
+            "close",                            # 2
+            "volume",                           # 3
+            "price_earnings_ttm",               # 4
+            "price_book_ratio",                 # 5
+            "dividend_yield_recent",            # 6
+            "return_on_equity",                 # 7
+            "return_on_invested_capital",       # 8
+            "net_margin",                       # 9
+            "enterprise_value_ebitda_ttm",      # 10
+            "earnings_per_share_basic_ttm",     # 11
+            "revenue_growth_5y",                # 12 (Crescimento de Receita 5 Anos em %)
+            "total_shares_outstanding",         # 13 (Ações em circulação)
+            "debt_to_equity"                    # 14 (Dívida / Patrimônio)
         ],
         "sort": {"sortBy": "volume", "sortOrder": "desc"},
         "range": [0, 500]
@@ -69,8 +86,12 @@ def obter_dados_base():
                 continue
                 
             def seguro(indice, padrao=0.0):
-                if val[indice] is None: return padrao
-                return float(val[indice])
+                if indice >= len(val) or val[indice] is None: 
+                    return padrao
+                try:
+                    return float(val[indice])
+                except (ValueError, TypeError):
+                    return padrao
 
             preco = seguro(2)
             if preco <= 0.1: continue 
@@ -78,19 +99,24 @@ def obter_dados_base():
             nome_empresa = val[1] if val[1] else f"Cia {ticker}"
             
             volume = seguro(3)
-            pl = seguro(4, 15.0)
-            pvp = seguro(5, 1.5)
+            pl = seguro(4, 0.0)
+            pvp = seguro(5, 0.0)
             dy = seguro(6, 0.0) / 100.0
             roe = seguro(7, 0.0) / 100.0
             roic = seguro(8, 0.0) / 100.0
             margem = seguro(9, 0.0) / 100.0
-            evebit = seguro(10, 10.0)
-            lpa = seguro(11, preco / pl if pl > 0 else 0)
+            evebit = seguro(10, 0.0)
+            lpa = seguro(11, preco / pl if pl > 0 else 0.0)
             vpa = preco / pvp if pvp > 0 else 0.0
             
-            crescimento = 0.05 
-            patrimonio = 5000000000.0
-            divida_patrimonio = 0.4
+            # --- CAPTURA CORRETA DO CRESCIMENTO (CAGR 5A) ---
+            # O TradingView entrega o crescimento em porcentagem (ex: 12.5 para 12,5%)
+            crescimento_bruto = seguro(12, 0.0)
+            crescimento = crescimento_bruto / 100.0 if crescimento_bruto != 0 else 0.0
+            
+            total_acoes = seguro(13, 0.0)
+            patrimonio = (preco * total_acoes) / pvp if pvp > 0 else 0.0
+            divida_patrimonio = seguro(14, 0.0)
             liquidez = volume * preco
 
             resultados.append({
@@ -107,7 +133,7 @@ def obter_dados_base():
                 "roe": roe,
                 "margem": margem,
                 "evebit": evebit,
-                "crescimento": crescimento,
+                "crescimento": crescimento,  # Agora refletindo a porcentagem individual real
                 "liquidez": liquidez,
                 "patrimonio": patrimonio,
                 "divida_patrimonio": divida_patrimonio
@@ -119,7 +145,7 @@ def obter_dados_base():
             df = df.fillna(0)
             _CACHE["df"] = df
             _CACHE["updated_at"] = agora
-            print(f"✅ [API] Sucesso Máximo! {len(df)} ações da B3 extraídas.")
+            print(f"✅ [API] Sucesso! {len(df)} ações da B3 extraídas com indicadores reais.")
             return df.copy()
             
     except Exception as e:
@@ -149,6 +175,7 @@ def get_rankings():
     margem_min = float(request.args.get('margem_min', 0)) / 100
     cagr_min = float(request.args.get('cagr_min', 0)) / 100
 
+    # 1. Aplicagem de Filtros Iniciais e de Liquidez
     mask = (df['liquidez'] >= liq_min)
     if pl_max > 0: mask &= (df['pl'] <= pl_max) & (df['pl'] > 0)
     if pvp_max > 0: mask &= (df['pvp'] <= pvp_max) & (df['pvp'] > 0)
@@ -163,27 +190,63 @@ def get_rankings():
 
     if df.empty: return jsonify([])
 
+    # ==========================================
+    # LÓGICA DE RANKING - 100% FIEL À LITERATURA
+    # ==========================================
+
+    # A. BENJAMIN GRAHAM: Vj = sqrt(22.5 * LPA * VPA) | Ordena por maior Margem de Segurança
     if metodo == "graham":
-        df['valor_justo'] = df.apply(lambda r: np.sqrt(22.5 * r['lpa'] * r['vpa']) if r['lpa'] > 0 and r['vpa'] > 0 else 0, axis=1)
-        df['potencial'] = (df['valor_justo'] - df['preco']) / df['preco'].replace(0, 1)
+        df = df[(df['lpa'] > 0) & (df['vpa'] > 0)].copy()
+        if df.empty: return jsonify([])
+        
+        df['valor_justo'] = np.sqrt(22.5 * df['lpa'] * df['vpa'])
+        df['potencial'] = (df['valor_justo'] - df['preco']) / df['preco']
         df = df.sort_values(by='potencial', ascending=False)
+
+    # B. DÉCIO BAZIN: Preço Teto = DPA / 0.06 | Ordena por maior Margem de Renda
     elif metodo == "bazin":
-        df['preco_teto'] = (df['preco'] * df['dy']) / 0.06
-        df['potencial'] = (df['preco_teto'] - df['preco']) / df['preco'].replace(0, 1)
+        df = df[df['dy'] > 0].copy()
+        if df.empty: return jsonify([])
+        
+        df['dpa'] = df['preco'] * df['dy']
+        df['preco_teto'] = df['dpa'] / 0.06
+        df['potencial'] = (df['preco_teto'] - df['preco']) / df['preco']
         df = df.sort_values(by='potencial', ascending=False)
+
+    # C. JOEL GREENBLATT: Magic Formula (Ranking de Menor Score em ROIC + EV/EBIT)
     elif metodo == "greenblatt":
         df_m = df[(df['evebit'] > 0) & (df['roic'] > 0)].copy()
-        df_m['score'] = df_m['roic'].rank(ascending=False) + df_m['evebit'].rank(ascending=True)
+        if df_m.empty: return jsonify([])
+        
+        # Rank de Rentabilidade (ROIC) - Maior é melhor (1º = Maior ROIC)
+        rank_roic = df_m['roic'].rank(ascending=False, method='min')
+        # Rank de Preço (EV/EBIT) - Menor é melhor (1º = Menor EV/EBIT)
+        rank_evebit = df_m['evebit'].rank(ascending=True, method='min')
+        
+        df_m['score'] = rank_roic + rank_evebit
         df = df_m.sort_values(by='score', ascending=True)
         df['potencial'] = df['score']
+
+    # D. PETER LYNCH: GARP (PEG Ratio = (P/L) / Growth_pct) | Menor PEG é melhor (PEG < 1.0)
     elif metodo == "lynch":
         df_l = df[(df['pl'] > 0) & (df['crescimento'] > 0)].copy()
-        df_l['peg_ratio'] = df_l['pl'] / (df_l['crescimento'] * 100)
+        if df_l.empty: return jsonify([])
+        
+        # Converte crescimento decimal para porcentagem inteira (ex: 0.12 -> 12.0)
+        crescimento_pct = df_l['crescimento'] * 100.0
+        df_l['peg_ratio'] = df_l['pl'] / crescimento_pct
+        
         df = df_l.sort_values(by='peg_ratio', ascending=True)
         df['potencial'] = df['crescimento']
 
     df = df.reset_index(drop=True)
     df['rank'] = df.index + 1
+
+    # Gravação automática dos dados diários no banco SQLite
+    try:
+        database.salvar_historico_ranking(df, metodo)
+    except Exception as e:
+        print(f"🚨 [ERRO BANCO]: {e}")
 
     return jsonify(df.to_dict(orient='records'))
 
@@ -219,11 +282,9 @@ def get_analise_completa():
         "links": {"site_ri": site_ri, "relatorio_oficial": link_relatorio}
     }
 
-    # Tradução do período
     p_map = {"30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"}
     range_api = p_map.get(periodo_solicitado, "1y")
     
-    # Para 5 e 10 anos, exige-se gráfico semanal para o pacote não quebrar
     intervalo_api = "1d"
     if range_api in ["5y", "10y"]:
         intervalo_api = "1wk"
@@ -231,8 +292,6 @@ def get_analise_completa():
     chart_data = None
 
     try:
-        # ARQUITETURA DEFINITIVA: API RAW Yahoo Finance (V8)
-        # Ignora os bugs da biblioteca yfinance e o limite da Brapi
         url_yahoo = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker_input}.SA?range={range_api}&interval={intervalo_api}"
         headers_yahoo = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"}
         
@@ -247,7 +306,6 @@ def get_analise_completa():
                 timestamps = data.get("timestamp", [])
                 quote = data.get("indicators", {}).get("quote", [{}])[0]
                 
-                # Monta a tabela achatando os dados brutos e preenchendo os buracos
                 df_chart = pd.DataFrame({
                     "date": pd.to_datetime(timestamps, unit="s"),
                     "open": quote.get("open", []),
@@ -257,15 +315,11 @@ def get_analise_completa():
                     "volume": quote.get("volume", [])
                 })
                 
-                # Converte para texto pro site aceitar
                 df_chart["date"] = df_chart["date"].dt.strftime("%Y-%m-%d")
-                
-                # Corrige nulos nos feriados
                 df_chart = df_chart.ffill().bfill()
                 
                 series_close = df_chart['close']
                 
-                # Matemática Financeira Clássica
                 delta = series_close.diff()
                 gain = delta.where(delta > 0, 0).rolling(window=min(14, len(series_close))).mean()
                 loss = -delta.where(delta < 0, 0).rolling(window=min(14, len(series_close))).mean()
@@ -275,7 +329,6 @@ def get_analise_completa():
                 ma50 = series_close.rolling(window=min(50, len(series_close))).mean().bfill().tolist()
                 ma200 = series_close.rolling(window=min(200, len(series_close))).mean().bfill().tolist()
                 
-                # Garante que nenhum 'NaN' chegue ao JSON
                 def limpa_nulos(lista):
                     return [float(x) if pd.notnull(x) else 0.0 for x in lista]
 
