@@ -36,8 +36,6 @@ async function carregarDados() {
     tbody.innerHTML = `<tr><td colspan="13"><div class="spinner-box"><div class="spinner"></div><strong>Consultando base de dados do mercado...</strong></div></td></tr>`;
     
     const p = param => document.getElementById(param).value;
-    
-    // LINK OFICIAL DO RENDER
     const url = `https://jmpinvestimentos.onrender.com/api/rankings?metodo=${p('metodo')}&liq_min=${p('liq_min')}&pl_max=${p('pl_max')}&pvp_max=${p('pvp_max')}&dy_min=${p('dy_min')}&roe_min=${p('roe_min')}&roic_min=${p('roic_min')}&margem_min=${p('margem_min')}&cagr_min=${p('cagr_min')}`;
     
     try {
@@ -75,7 +73,6 @@ async function carregarDados() {
 
         renderizarTabela();
     } catch (error) {
-        // TRAVA DE SEGURANÇA: Se o Render demorar a acordar, não trava a tela
         tbody.innerHTML = `<tr><td colspan="13"><div class="placeholder-box"><h3 style="color:#ef5350;">Aguardando Servidor</h3><p>O servidor está iniciando. Atualize a página em alguns segundos.</p></div></td></tr>`;
     }
 }
@@ -103,7 +100,7 @@ function renderizarTabela() {
             tdCol1 = `<td><strong>${item.potencial} Pontos</strong></td>`;
         } else if(m === 'lynch') {
             tdCol1 = `<td><strong>${item.peg_ratio.toFixed(2)}</strong></td>`;
-            tdCol2 = `<td style="color: #4cd681; font-weight: bold;">${(item.potencial * 100).toFixed(1)}% ao ano</td>`;
+            tdCol2 = `<td style="color: #4cd681; font-weight: bold;">${(item.crescimento * 100).toFixed(1)}% ao ano</td>`;
         }
 
         const fallbackAvatar = `https://ui-avatars.com/api/?name=${item.ticker.slice(0,2)}&background=21262d&color=4cd681&bold=true&size=64`;
@@ -140,7 +137,6 @@ function mudarPagina(direcao) {
 }
 
 async function carregarTickers() {
-    // LINK OFICIAL DO RENDER
     const res = await fetch('https://jmpinvestimentos.onrender.com/api/tickers');
     const tickers = await res.json();
     const datalist = document.getElementById('lista-tickers');
@@ -165,7 +161,6 @@ async function carregarAnalise() {
     }
 
     try {
-        // LINK OFICIAL DO RENDER
         const res = await fetch(`https://jmpinvestimentos.onrender.com/api/analise?ticker=${t}&periodo=${p}`);
         const data = await res.json();
 

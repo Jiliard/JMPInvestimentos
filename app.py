@@ -37,21 +37,22 @@ def obter_dados_base():
             {"left": "type", "operation": "equal", "right": "stock"}
         ],
         "columns": [
-            "name",                                    # 0: Nome
-            "description",                             # 1: Descrição
-            "close",                                   # 2: Preço
-            "volume",                                  # 3: Volume
-            "price_earnings_ttm",                      # 4: P/L
-            "price_book_ratio",                        # 5: P/VP
-            "dividend_yield_recent",                   # 6: DY
-            "return_on_equity",                        # 7: ROE
-            "return_on_invested_capital",              # 8: ROIC
-            "net_margin",                              # 9: Margem
-            "enterprise_value_ebitda_ttm",             # 10: EV/EBITDA
-            "earnings_per_share_basic_ttm",            # 11: LPA
-            "total_revenue_growth_5y",                 # 12: Crescimento Receita 5 Anos (CAGR)
-            "total_equity",                            # 13: Patrimônio Líquido
-            "total_debt"                               # 14: Dívida Total
+            "name",                                       # 0: Nome
+            "description",                                # 1: Descrição
+            "close",                                      # 2: Preço
+            "volume",                                     # 3: Volume
+            "price_earnings_ttm",                         # 4: P/L
+            "price_book_ratio",                           # 5: P/VP
+            "dividend_yield_recent",                      # 6: DY
+            "return_on_equity",                           # 7: ROE
+            "return_on_invested_capital",                 # 8: ROIC
+            "net_margin",                                 # 9: Margem
+            "enterprise_value_ebitda_ttm",                # 10: EV/EBITDA
+            "earnings_per_share_basic_ttm",               # 11: LPA
+            "total_revenue_growth_5y",                    # 12: Crescimento Receita 5 Anos (CAGR)
+            "earnings_per_share_diluted_growth_ttm_yoy",  # 13: Crescimento Lucro Anual (Fallback)
+            "total_equity",                               # 14: Patrimônio Líquido
+            "total_debt"                                  # 15: Dívida Total
         ],
         "sort": {"sortBy": "volume", "sortOrder": "desc"},
         "range": [0, 500]
@@ -82,7 +83,7 @@ def obter_dados_base():
                 continue
             
             val = item.get("d", [])
-            if not val or len(val) < 15:
+            if not val or len(val) < 16:
                 continue
                 
             def seguro(indice, padrao=0.0):
@@ -105,12 +106,21 @@ def obter_dados_base():
             lpa = seguro(11, preco / pl if pl > 0 else 0.0)
             vpa = preco / pvp if pvp > 0 else 0.0
             
-            # --- CAPTURA DE CRESCIMENTO E MÉTRICAS DE BALANÇO ---
-            crescimento_raw = seguro(12, 5.0)  # Padrão de 5.0% se vier nulo do TV
-            crescimento = (crescimento_raw / 100.0) if crescimento_raw > 0 else 0.05
+            # --- CAPTURA DINÂMICA E FALLBACK DE CRESCIMENTO (CAGR) ---
+            crescimento_5y = seguro(12, 0.0)
+            crescimento_yoy = seguro(13, 0.0)
             
-            patrimonio = seguro(13, 0.0)
-            divida_total = seguro(14, 0.0)
+            # Prioriza o CAGR de 5 anos; se for zerado/indisponível, usa o crescimento do lucro mais recente
+            crescimento_bruto = crescimento_5y if crescimento_5y > 0 else crescimento_yoy
+            
+            # Se a API não retornar dado de crescimento para o ativo, adota uma taxa conservadora padrão (8.0%)
+            if crescimento_bruto <= 0:
+                crescimento_bruto = 8.0
+                
+            crescimento = crescimento_bruto / 100.0  # Converte em formato decimal
+            
+            patrimonio = seguro(14, 0.0)
+            divida_total = seguro(15, 0.0)
             
             divida_patrimonio = (divida_total / patrimonio) if patrimonio > 0 else 0.0
             liquidez = volume * preco
@@ -171,7 +181,7 @@ def get_rankings():
     margem_min = float(request.args.get('margem_min', 0)) / 100
     cagr_min = float(request.args.get('cagr_min', 0)) / 100
 
-    # 1. Aplicagem de Filtros Iniciais e de Liquidez
+    # Filtros Fundamentais
     mask = (df['liquidez'] >= liq_min)
     if pl_max > 0: mask &= (df['pl'] <= pl_max) & (df['pl'] > 0)
     if pvp_max > 0: mask &= (df['pvp'] <= pvp_max) & (df['pvp'] > 0)
@@ -186,11 +196,7 @@ def get_rankings():
 
     if df.empty: return jsonify([])
 
-    # ==========================================
-    # LÓGICA DE RANKING - 100% FIEL À LITERATURA
-    # ==========================================
-
-    # A. BENJAMIN GRAHAM
+    # LÓGICA DE RANKING
     if metodo == "graham":
         df = df[(df['lpa'] > 0) & (df['vpa'] > 0)].copy()
         if df.empty: return jsonify([])
@@ -199,7 +205,6 @@ def get_rankings():
         df['potencial'] = (df['valor_justo'] - df['preco']) / df['preco']
         df = df.sort_values(by='potencial', ascending=False)
 
-    # B. DÉCIO BAZIN
     elif metodo == "bazin":
         df = df[df['dy'] > 0].copy()
         if df.empty: return jsonify([])
@@ -209,7 +214,6 @@ def get_rankings():
         df['potencial'] = (df['preco_teto'] - df['preco']) / df['preco']
         df = df.sort_values(by='potencial', ascending=False)
 
-    # C. JOEL GREENBLATT
     elif metodo == "greenblatt":
         df_m = df[(df['evebit'] > 0) & (df['roic'] > 0)].copy()
         if df_m.empty: return jsonify([])
@@ -221,23 +225,21 @@ def get_rankings():
         df = df_m.sort_values(by='score', ascending=True)
         df['potencial'] = df['score']
 
-    # D. PETER LYNCH: GARP (PEG Ratio = (P/L) / Taxa de Crescimento %)
     elif metodo == "lynch":
         df_l = df[df['pl'] > 0].copy()
         if df_l.empty: return jsonify([])
         
-        # Garante que a taxa em porcentagem seja >= 1.0% para evitar divisão por zero ou PEG negativo
-        df_l['crescimento_pct'] = df_l['crescimento'].apply(lambda x: (x * 100) if x > 0 else 1.0)
+        # Converte a taxa de crescimento para porcentagem e calcula o PEG Ratio
+        df_l['crescimento_pct'] = df_l['crescimento'] * 100.0
         df_l['peg_ratio'] = df_l['pl'] / df_l['crescimento_pct']
         
-        # Na literatura de Lynch, menor PEG é melhor (PEG < 1.0 é ideal)
+        # Ordena do menor PEG Ratio para o maior
         df = df_l.sort_values(by='peg_ratio', ascending=True)
         df['potencial'] = df['crescimento']
 
     df = df.reset_index(drop=True)
     df['rank'] = df.index + 1
 
-    # Gravação dos dados diários no banco de dados
     try:
         database.salvar_historico_ranking(df, metodo)
     except Exception as e:
