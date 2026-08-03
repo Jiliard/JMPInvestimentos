@@ -6,7 +6,7 @@ import requests
 import warnings
 import time
 
-# Módulo de persistência SQLite
+# Módulo de persistência de banco de dados
 import database
 
 warnings.filterwarnings("ignore")
@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore")
 app = Flask(__name__)
 CORS(app)
 
-# Inicializa a estrutura do banco SQLite ao ligar o servidor
+# Inicializa a estrutura do banco ao ligar o servidor
 database.inicializar_banco()
 
 _CACHE = {"df": None, "updated_at": 0}
@@ -65,7 +65,7 @@ def obter_dados_base():
     resultados = []
     
     try:
-        r = requests.post(url_tv, json=payload, headers=headers, timeout=10)
+        r = requests.post(url_tv, json=payload, headers=headers, timeout=12)
         
         if r.status_code != 200:
             print(f"🚨 [ERRO TV] Status {r.status_code}: {r.text}")
@@ -105,10 +105,9 @@ def obter_dados_base():
             lpa = seguro(11, preco / pl if pl > 0 else 0.0)
             vpa = preco / pvp if pvp > 0 else 0.0
             
-            # --- INDICADORES REAIS (SEM HARDCODE) ---
-            # O TradingView retorna a porcentagem direta de crescimento de receita nos 5 anos (ex: 15.5 para 15.5%)
-            crescimento_bruto = seguro(12, 0.0)
-            crescimento = crescimento_bruto / 100.0  # Converte para decimal (ex: 0.155)
+            # --- CAPTURA DE CRESCIMENTO E MÉTRICAS DE BALANÇO ---
+            crescimento_raw = seguro(12, 5.0)  # Padrão de 5.0% se vier nulo do TV
+            crescimento = (crescimento_raw / 100.0) if crescimento_raw > 0 else 0.05
             
             patrimonio = seguro(13, 0.0)
             divida_total = seguro(14, 0.0)
@@ -191,7 +190,7 @@ def get_rankings():
     # LÓGICA DE RANKING - 100% FIEL À LITERATURA
     # ==========================================
 
-    # A. BENJAMIN GRAHAM: Vj = sqrt(22.5 * LPA * VPA) | Ordena por maior Margem de Segurança
+    # A. BENJAMIN GRAHAM
     if metodo == "graham":
         df = df[(df['lpa'] > 0) & (df['vpa'] > 0)].copy()
         if df.empty: return jsonify([])
@@ -200,7 +199,7 @@ def get_rankings():
         df['potencial'] = (df['valor_justo'] - df['preco']) / df['preco']
         df = df.sort_values(by='potencial', ascending=False)
 
-    # B. DÉCIO BAZIN: Preço Teto = DPA / 0.06 | Ordena por maior Margem de Renda
+    # B. DÉCIO BAZIN
     elif metodo == "bazin":
         df = df[df['dy'] > 0].copy()
         if df.empty: return jsonify([])
@@ -210,37 +209,35 @@ def get_rankings():
         df['potencial'] = (df['preco_teto'] - df['preco']) / df['preco']
         df = df.sort_values(by='potencial', ascending=False)
 
-    # C. JOEL GREENBLATT: Magic Formula (Ranking de Menor Score em ROIC + EV/EBIT)
+    # C. JOEL GREENBLATT
     elif metodo == "greenblatt":
         df_m = df[(df['evebit'] > 0) & (df['roic'] > 0)].copy()
         if df_m.empty: return jsonify([])
         
-        # Rank de Rentabilidade (ROIC) - Maior é melhor (1º = Maior ROIC)
         rank_roic = df_m['roic'].rank(ascending=False, method='min')
-        # Rank de Preço (EV/EBIT) - Menor é melhor (1º = Menor EV/EBIT)
         rank_evebit = df_m['evebit'].rank(ascending=True, method='min')
         
         df_m['score'] = rank_roic + rank_evebit
         df = df_m.sort_values(by='score', ascending=True)
         df['potencial'] = df['score']
 
-    # D. PETER LYNCH: GARP (PEG Ratio = (P/L) / Growth_pct) | Menor PEG é melhor (PEG < 1.0)
+    # D. PETER LYNCH: GARP (PEG Ratio = (P/L) / Taxa de Crescimento %)
     elif metodo == "lynch":
-        # Garante que o dataframe não fique vazio mesmo se o crescimento estiver zerado
         df_l = df[df['pl'] > 0].copy()
+        if df_l.empty: return jsonify([])
         
-        # Evita divisão por zero e calcula o PEG Ratio
-        df_l['crescimento_adj'] = df_l['crescimento'].apply(lambda x: x if x > 0 else 0.01)
-        df_l['peg_ratio'] = df_l['pl'] / (df_l['crescimento_adj'] * 100)
+        # Garante que a taxa em porcentagem seja >= 1.0% para evitar divisão por zero ou PEG negativo
+        df_l['crescimento_pct'] = df_l['crescimento'].apply(lambda x: (x * 100) if x > 0 else 1.0)
+        df_l['peg_ratio'] = df_l['pl'] / df_l['crescimento_pct']
         
-        # Ordena do MENOR PEG Ratio para o MAIOR (filosofia Peter Lynch: PEG < 1.0 é ideal)
+        # Na literatura de Lynch, menor PEG é melhor (PEG < 1.0 é ideal)
         df = df_l.sort_values(by='peg_ratio', ascending=True)
         df['potencial'] = df['crescimento']
 
     df = df.reset_index(drop=True)
     df['rank'] = df.index + 1
 
-    # Gravação automática dos dados diários no banco SQLite
+    # Gravação dos dados diários no banco de dados
     try:
         database.salvar_historico_ranking(df, metodo)
     except Exception as e:
