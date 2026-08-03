@@ -112,7 +112,10 @@ def obter_dados_base():
             lpa = seguro(11, preco / pl if pl > 0 else 0.0)
             vpa = preco / pvp if pvp > 0 else 0.0
             
-            # Captura de crescimento real sem travar em valor fixo estático
+            # -------------------------------------------------------------
+            # CRESCIMENTO SUSTENTÁVEL DA LITERATURA FINANCEIRA (Damodaran)
+            # g = ROE * (1 - Payout)
+            # -------------------------------------------------------------
             crescimento_5y = seguro(12, None)
             crescimento_yoy = seguro(13, None)
             
@@ -121,8 +124,15 @@ def obter_dados_base():
             elif crescimento_yoy is not None and crescimento_yoy != 0:
                 crescimento_bruto = crescimento_yoy
             else:
-                # Se a empresa for nova ou não tiver histórico publicado no TradingView, calcula uma estimativa dinâmica via ROE x Retenção
-                crescimento_bruto = max((roe * 100.0) * 0.6, 1.0) if roe > 0 else 1.0
+                # Cálculo do Payout Real: Payout = DY * PL
+                payout_estimado = dy * pl if (dy > 0 and pl > 0) else 0.40 # Padrão 40% se não houver DY
+                
+                # Taxa de Retenção (b) = 1 - Payout (Travada estritamente entre 0% e 100%)
+                retencao_real = max(0.0, min(1.0, 1.0 - payout_estimado))
+                
+                # Crescimento Sustentável (g = ROE * Retenção)
+                crescimento_sustentavel = (roe * 100.0) * retencao_real
+                crescimento_bruto = max(crescimento_sustentavel, 1.0) if roe > 0 else 1.0
                 
             crescimento = crescimento_bruto / 100.0  # Em decimal
             

@@ -92,22 +92,22 @@ function renderizarTabela() {
 
         if(m === 'graham') {
             tdCol1 = `<td><strong>R$ ${item.valor_justo.toFixed(2)}</strong></td>`;
-            tdCol2 = `<td style="color: #4cd681; font-weight: bold;">${(item.potencial * 100).toFixed(1)}%</td>`;
+            tdCol2 = `<td class="val-positive">${(item.potencial * 100).toFixed(1)}%</td>`;
         } else if(m === 'bazin') {
             tdCol1 = `<td><strong>R$ ${item.preco_teto.toFixed(2)}</strong></td>`;
-            tdCol2 = `<td style="color: #4cd681; font-weight: bold;">${(item.potencial * 100).toFixed(1)}%</td>`;
+            tdCol2 = `<td class="val-positive">${(item.potencial * 100).toFixed(1)}%</td>`;
         } else if(m === 'greenblatt') {
-            tdCol1 = `<td><strong>${item.potencial} Pontos</strong></td>`;
+            tdCol1 = `<td><strong>${item.potencial} pts</strong></td>`;
         } else if(m === 'lynch') {
             tdCol1 = `<td><strong>${item.peg_ratio.toFixed(2)}</strong></td>`;
-            tdCol2 = `<td style="color: #4cd681; font-weight: bold;">${(item.crescimento * 100).toFixed(1)}% ao ano</td>`;
+            tdCol2 = `<td class="val-positive">${(item.crescimento * 100).toFixed(1)}% a.a.</td>`;
         }
 
-        const fallbackAvatar = `https://ui-avatars.com/api/?name=${item.ticker.slice(0,2)}&background=21262d&color=4cd681&bold=true&size=64`;
+        const fallbackAvatar = `https://ui-avatars.com/api/?name=${item.ticker.slice(0,2)}&background=1E293B&color=10B981&bold=true&size=64`;
         
         tbody.innerHTML += `
             <tr>
-                <td><strong>${item.rank}</strong></td>
+                <td><span class="rank-badge">${item.rank}º</span></td>
                 <td><img src="${item.logo}" class="logo-img" alt="${item.ticker}" onerror="this.onerror=null; this.src='${fallbackAvatar}';"></td>
                 <td>${item.nome}</td>
                 <td><strong>${item.ticker}</strong></td>
@@ -172,7 +172,7 @@ async function carregarAnalise() {
 
         const f = data.fundamentos;
         const cd = data.chart_data;
-        const fallbackAvatar = `https://ui-avatars.com/api/?name=${data.ticker.slice(0,2)}&background=21262d&color=4cd681&bold=true&size=64`;
+        const fallbackAvatar = `https://ui-avatars.com/api/?name=${data.ticker.slice(0,2)}&background=1E293B&color=10B981&bold=true&size=64`;
 
         const fmtM = val => `R$ ${(val/1000000).toFixed(1)}M`;
         const fmtP = val => `${(val*100).toFixed(1)}%`;
@@ -185,11 +185,11 @@ async function carregarAnalise() {
                         <img src="${data.logo}" alt="${data.ticker}" onerror="this.onerror=null; this.src='${fallbackAvatar}';">
                         <div>
                             <h2>${data.nome}</h2>
-                            <span style="margin-top:5px; display:inline-block;">Ativo: <strong>${data.ticker}</strong></span>
+                            <span style="color:#94A3B8; font-weight:600;">Ativo B3: <strong style="color:#10B981">${data.ticker}</strong></span>
                         </div>
                     </div>
                     <div class="raio-x-preco">
-                        <p>Cotação Atual</p>
+                        <p style="margin:0; color:#94A3B8; font-size:0.8rem; text-transform:uppercase;">Cotação Atual</p>
                         <h3>R$ ${f.preco.toFixed(2)}</h3>
                     </div>
                 </div>
@@ -197,72 +197,33 @@ async function carregarAnalise() {
                 <div class="raio-x-grid">
                     <div class="raio-x-section">
                         <h4>Múltiplos e Preço</h4>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">Preço / Lucro (P/L) <span class="tooltip" title="Preço da ação dividido pelo lucro anual por ação.">ⓘ</span></span> 
-                            <span class="raio-x-val">${fmtX(f.pl)}</span>
-                        </div>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">Preço / Patrimônio (P/VP) <span class="tooltip" title="Preço da ação dividido pelo patrimônio líquido por ação.">ⓘ</span></span> 
-                            <span class="raio-x-val">${fmtX(f.pvp)}</span>
-                        </div>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">EV / EBIT <span class="tooltip" title="Valor da firma (Preço + Dívidas) dividido pelo lucro operacional.">ⓘ</span></span> 
-                            <span class="raio-x-val">${fmtX(f.evebit)}</span>
-                        </div>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">Lucro por Ação (LPA) <span class="tooltip" title="Lucro líquido total da empresa dividido pelo número de ações.">ⓘ</span></span> 
-                            <span class="raio-x-val">R$ ${f.lpa.toFixed(2)}</span>
-                        </div>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">V. Patrimonial (VPA) <span class="tooltip" title="Patrimônio líquido total dividido pelo número de ações.">ⓘ</span></span> 
-                            <span class="raio-x-val">R$ ${f.vpa.toFixed(2)}</span>
-                        </div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">Preço / Lucro (P/L)</span><span class="raio-x-val">${fmtX(f.pl)}</span></div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">Preço / Patrimônio (P/VP)</span><span class="raio-x-val">${fmtX(f.pvp)}</span></div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">EV / EBIT</span><span class="raio-x-val">${fmtX(f.evebit)}</span></div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">Lucro por Ação (LPA)</span><span class="raio-x-val">R$ ${f.lpa.toFixed(2)}</span></div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">V. Patrimonial (VPA)</span><span class="raio-x-val">R$ ${f.vpa.toFixed(2)}</span></div>
                     </div>
 
                     <div class="raio-x-section">
                         <h4>Rentabilidade e Eficiência</h4>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">Retorno Operacional (ROIC) <span class="tooltip" title="Eficiência em gerar lucros com todo o capital alocado (próprio + dívidas).">ⓘ</span></span> 
-                            <span class="raio-x-val" style="color:#4cd681;">${fmtP(f.roic)}</span>
-                        </div>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">Retorno Patrimônio (ROE) <span class="tooltip" title="Rentabilidade do dinheiro investido diretamente pelos acionistas.">ⓘ</span></span> 
-                            <span class="raio-x-val">${fmtP(f.roe)}</span>
-                        </div>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">Margem Líquida <span class="tooltip" title="Percentual de lucro líquido gerado para cada real faturado na receita.">ⓘ</span></span> 
-                            <span class="raio-x-val">${fmtP(f.margem)}</span>
-                        </div>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">Dividend Yield (DY) <span class="tooltip" title="Rendimento percentual gerado por dividendos pagos nos últimos 12 meses.">ⓘ</span></span> 
-                            <span class="raio-x-val" style="color:#4cd681;">${fmtP(f.dy)}</span>
-                        </div>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">Cresc. Receita (5 Anos) <span class="tooltip" title="Taxa anual composta de crescimento da receita líquida em 5 anos.">ⓘ</span></span> 
-                            <span class="raio-x-val">${fmtP(f.crescimento)}</span>
-                        </div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">Retorno Operacional (ROIC)</span><span class="raio-x-val" style="color:#34D399;">${fmtP(f.roic)}</span></div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">Retorno Patrimônio (ROE)</span><span class="raio-x-val">${fmtP(f.roe)}</span></div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">Margem Líquida</span><span class="raio-x-val">${fmtP(f.margem)}</span></div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">Dividend Yield (DY)</span><span class="raio-x-val" style="color:#34D399;">${fmtP(f.dy)}</span></div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">Cresc. Receita (5 Anos)</span><span class="raio-x-val">${fmtP(f.crescimento)}</span></div>
                     </div>
 
                     <div class="raio-x-section">
                         <h4>Estrutura e Balanço</h4>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">Liquidez Diária <span class="tooltip" title="Volume financeiro médio negociado diariamente na bolsa.">ⓘ</span></span> 
-                            <span class="raio-x-val">${fmtM(f.liquidez)}</span>
-                        </div>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">Patrimônio Líquido <span class="tooltip" title="Valor total dos bens e direitos da empresa descontando as obrigações.">ⓘ</span></span> 
-                            <span class="raio-x-val">${fmtM(f.patrimonio)}</span>
-                        </div>
-                        <div class="raio-x-item">
-                            <span class="raio-x-label">Dívida Líq / Patrimônio <span class="tooltip" title="Grau de alavancagem. Valores acima de 1.0 exigem atenção ao endividamento.">ⓘ</span></span> 
-                            <span class="raio-x-val">${fmtX(f.divida_patrimonio)}</span>
-                        </div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">Liquidez Diária</span><span class="raio-x-val">${fmtM(f.liquidez)}</span></div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">Patrimônio Líquido</span><span class="raio-x-val">${fmtM(f.patrimonio)}</span></div>
+                        <div class="raio-x-item"><span style="color:#94A3B8;">Dívida Líq / Patrimônio</span><span class="raio-x-val">${fmtX(f.divida_patrimonio)}</span></div>
                     </div>
                 </div>
 
-                <div class="raio-x-actions">
-                    <a href="${f.links.site_ri}" target="_blank" class="btn-ri">Site da Empresa (RI)</a>
-                    <a href="${f.links.relatorio_oficial}" target="_blank" class="btn-relatorio">Obter Relatório Completo</a>
+                <div class="raio-x-actions" style="display:flex; gap:12px; justify-content:flex-end;">
+                    <a href="${f.links.site_ri}" target="_blank" class="btn-ri">RI da Empresa</a>
+                    <a href="${f.links.relatorio_oficial}" target="_blank" class="btn-relatorio">Ver no TradingView</a>
                 </div>
             </div>
         `;
@@ -272,48 +233,41 @@ async function carregarAnalise() {
             
             const traceCandle = {
                 x: cd.dates, open: cd.open, high: cd.high, low: cd.low, close: cd.close,
-                type: 'candlestick', name: 'Cotação (OHLC)',
-                increasing: {line: {color: '#26a69a'}}, decreasing: {line: {color: '#ef5350'}}, yaxis: 'y'
+                type: 'candlestick', name: 'Cotação',
+                increasing: {line: {color: '#10B981'}}, decreasing: {line: {color: '#F43F5E'}}, yaxis: 'y'
             };
             const traceMA50 = {
                 x: cd.dates, y: cd.ma50, type: 'scatter', mode: 'lines',
-                line: {color: '#ff9800', width: 1.5}, name: 'Média Curta (50d)', yaxis: 'y'
+                line: {color: '#F59E0B', width: 1.5}, name: 'MM 50d', yaxis: 'y'
             };
             const traceMA200 = {
                 x: cd.dates, y: cd.ma200, type: 'scatter', mode: 'lines',
-                line: {color: '#2962ff', width: 2}, name: 'Média Longa (200d)', yaxis: 'y'
+                line: {color: '#3B82F6', width: 2}, name: 'MM 200d', yaxis: 'y'
             };
             const traceVolume = {
                 x: cd.dates, y: cd.volume, type: 'bar', name: 'Volume',
-                marker: {color: 'rgba(255, 255, 255, 0.15)'}, yaxis: 'y2'
+                marker: {color: 'rgba(255, 255, 255, 0.1)'}, yaxis: 'y2'
             };
             const traceRSI = {
                 x: cd.dates, y: cd.rsi, type: 'scatter', mode: 'lines',
-                line: {color: '#b39ddb', width: 2}, name: 'RSI (Força)', xaxis: 'x', yaxis: 'y3'
+                line: {color: '#A855F7', width: 2}, name: 'IFR (14)', xaxis: 'x', yaxis: 'y3'
             };
 
             const layout = {
-                template: 'plotly_dark', plot_bgcolor: '#161b22', paper_bgcolor: '#0d1117',
-                height: 550, margin: {l: 50, r: 20, t: 20, b: 30},
+                template: 'plotly_dark', plot_bgcolor: '#0F172A', paper_bgcolor: '#111827',
+                height: 520, margin: {l: 50, r: 20, t: 20, b: 30},
                 grid: { rows: 2, columns: 1, subplots: [['xy'], ['xy3']], roworder: 'top to bottom' },
-                xaxis: { type: 'category', nticks: 10, gridcolor: '#30363d', rangeslider: {visible: false} },
-                yaxis: { title: 'Cotação (R$)', domain: [0.35, 1], gridcolor: '#30363d' },
+                xaxis: { type: 'category', nticks: 10, gridcolor: '#1E293B', rangeslider: {visible: false} },
+                yaxis: { title: 'Preço (R$)', domain: [0.35, 1], gridcolor: '#1E293B' },
                 yaxis2: { overlaying: 'y', side: 'right', showgrid: false, showticklabels: false },
-                yaxis3: { title: 'RSI (0-100)', domain: [0, 0.25], range: [0, 100], gridcolor: '#30363d' },
-                shapes: [
-                    {type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y3', y0: 70, y1: 70, line: {color: '#ef5350', dash: 'dot', width: 1.5}},
-                    {type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y3', y0: 30, y1: 30, line: {color: '#26a69a', dash: 'dot', width: 1.5}}
-                ],
+                yaxis3: { title: 'IFR', domain: [0, 0.25], range: [0, 100], gridcolor: '#1E293B' },
                 legend: {orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1}
             };
 
             Plotly.newPlot('chart-container', [traceCandle, traceMA50, traceMA200, traceVolume, traceRSI], layout);
-        } else {
-            chartContainer.innerHTML = `<div style="text-align:center; padding:30px; color:#8b949e;">Dados históricos insuficientes para traçar o gráfico técnico neste período.</div>`;
         }
     } catch (e) {
-        fichaContainer.innerHTML = `<div class="placeholder-box"><h3 style="color:#ef5350;">Erro de comunicação</h3><p>Não foi possível processar a análise detalhada. Tente novamente.</p></div>`;
-        chartSection.style.display = "none";
+        fichaContainer.innerHTML = `<div class="placeholder-box"><h3 style="color:#ef5350;">Erro ao carregar dados</h3></div>`;
     }
 }
 
