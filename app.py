@@ -27,27 +27,24 @@ def obter_dados_base():
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    print("⏳ [API] Varrendo a B3 inteira via TradingView Scanner...")
+    print("⏳ [API] Varrendo a B3 inteira e calculando indicadores brutos...")
     
     url_tv = "https://scanner.tradingview.com/brazil/scan"
     
+    # BUSCAMOS APENAS OS DADOS BRUTOS / CONTÁBEIS PRIMÁRIOS
     cols = [
-        "name",                                       # 0: Nome
-        "description",                                # 1: Descrição
-        "close",                                      # 2: Preço
-        "volume",                                     # 3: Volume
-        "price_earnings_ttm",                         # 4: P/L
-        "price_book_ratio",                           # 5: P/VP
-        "dividend_yield_recent",                      # 6: DY
-        "return_on_equity",                           # 7: ROE
-        "return_on_invested_capital",                 # 8: ROIC
-        "net_margin",                                 # 9: Margem
-        "enterprise_value_ebitda_ttm",                # 10: EV/EBITDA
-        "earnings_per_share_basic_ttm",               # 11: LPA
-        "total_revenue_growth_5y",                    # 12: Crescimento Receita 5 Anos
-        "earnings_per_share_diluted_growth_ttm_yoy",  # 13: Crescimento Lucro YoY
-        "total_equity",                               # 14: Patrimônio
-        "total_debt"                                  # 15: Dívida
+        "name",                                       # 0: Ticker
+        "description",                                # 1: Nome
+        "close",                                      # 2: Cotação Atual (Preço)
+        "volume",                                     # 3: Volume Diário
+        "total_shares_outstanding",                   # 4: Total de Ações
+        "total_revenue",                              # 5: Receita Líquida
+        "net_income",                                 # 6: Lucro Líquido (12M)
+        "total_equity",                               # 7: Patrimônio Líquido
+        "total_debt",                                 # 8: Dívida Total
+        "dividends_paid",                             # 9: Total de Proventos Pagos (12M)
+        "ebitda",                                     # 10: EBITDA
+        "total_revenue_growth_5y"                     # 11: Crescimento Receita (5 Anos)
     ]
     
     payload = {
@@ -96,51 +93,58 @@ def obter_dados_base():
                         return padrao
                 return padrao
 
+            # --- 1. DADOS BRUTOS ---
             preco = seguro(2)
             if preco <= 0.1: continue 
             
             nome_empresa = val[1] if val[1] else f"Cia {ticker}"
-            
             volume = seguro(3)
-            pl = seguro(4, 0.0)
-            pvp = seguro(5, 0.0)
-            dy = seguro(6, 0.0) / 100.0
-            roe = seguro(7, 0.0) / 100.0
-            roic = seguro(8, 0.0) / 100.0
-            margem = seguro(9, 0.0) / 100.0
-            evebit = seguro(10, 0.0)
-            lpa = seguro(11, preco / pl if pl > 0 else 0.0)
-            vpa = preco / pvp if pvp > 0 else 0.0
+            num_acoes = seguro(4, 1.0)
             
-            # -------------------------------------------------------------
-            # CRESCIMENTO SUSTENTÁVEL DA LITERATURA FINANCEIRA (Damodaran)
-            # g = ROE * (1 - Payout)
-            # -------------------------------------------------------------
-            crescimento_5y = seguro(12, None)
-            crescimento_yoy = seguro(13, None)
+            lucro_liquido = seguro(6, 0.0)
+            patrimonio = seguro(7, 0.0)
+            divida_total = seguro(8, 0.0)
+            proventos_totais_12m = abs(seguro(9, 0.0))
+            ebitda = seguro(10, 0.0)
+            crescimento_5y = seguro(11, 0.0)
+
+            # --- 2. CÁLCULO DOS INDICADORES FINANCEIROS (CÓDIGO PRÓPRIO) ---
             
-            if crescimento_5y is not None and crescimento_5y != 0:
-                crescimento_bruto = crescimento_5y
-            elif crescimento_yoy is not None and crescimento_yoy != 0:
-                crescimento_bruto = crescimento_yoy
+            # A. LPA e VPA
+            lpa = (lucro_liquido / num_acoes) if num_acoes > 0 else 0.0
+            vpa = (patrimonio / num_acoes) if num_acoes > 0 else 0.0
+            
+            # B. P/L e P/VP
+            pl = (preco / lpa) if lpa > 0 else 0.0
+            pvp = (preco / vpa) if vpa > 0 else 0.0
+            
+            # C. Dividend Yield Real Calculado
+            dpa_12m = (proventos_totais_12m / num_acoes) if num_acoes > 0 else 0.0
+            dy = (dpa_12m / preco) if preco > 0 else 0.0
+            
+            # D. ROE e ROIC
+            roe = (lucro_liquido / patrimonio) if patrimonio > 0 else 0.0
+            capital_investido = patrimonio + divida_total
+            roic = (lucro_liquido / capital_investido) if capital_investido > 0 else 0.0
+            
+            # E. Margem Líquida e EV/EBITDA
+            receita = seguro(5, 0.0)
+            margem = (lucro_liquido / receita) if receita > 0 else 0.0
+            
+            valor_de_mercado = preco * num_acoes
+            enterprise_value = valor_de_mercado + divida_total
+            evebit = (enterprise_value / ebitda) if ebitda > 0 else 0.0
+            
+            # F. Taxa de Crescimento Sustentável (g = ROE * Retenção)
+            if crescimento_5y > 0:
+                crescimento = crescimento_5y / 100.0
             else:
-                # Cálculo do Payout Real: Payout = DY * PL
-                payout_estimado = dy * pl if (dy > 0 and pl > 0) else 0.40 # Padrão 40% se não houver DY
-                
-                # Taxa de Retenção (b) = 1 - Payout (Travada estritamente entre 0% e 100%)
-                retencao_real = max(0.0, min(1.0, 1.0 - payout_estimado))
-                
-                # Crescimento Sustentável (g = ROE * Retenção)
-                crescimento_sustentavel = (roe * 100.0) * retencao_real
-                crescimento_bruto = max(crescimento_sustentavel, 1.0) if roe > 0 else 1.0
-                
-            crescimento = crescimento_bruto / 100.0  # Em decimal
-            
-            patrimonio = seguro(14, 0.0)
-            divida_total = seguro(15, 0.0)
-            
-            divida_patrimonio = (divida_total / patrimonio) if patrimonio > 0 else 0.0
+                payout = (proventos_totais_12m / lucro_liquido) if lucro_liquido > 0 else 0.4
+                retencao = max(0.0, min(1.0, 1.0 - payout))
+                crescimento = max((roe * retencao), 0.01)
+
             liquidez = volume * preco
+            divida_patrimonio = (divida_total / patrimonio) if patrimonio > 0 else 0.0
 
             resultados.append({
                 "ticker": ticker,
@@ -152,6 +156,7 @@ def obter_dados_base():
                 "lpa": lpa,
                 "vpa": vpa,
                 "dy": dy,
+                "dpa_12m": dpa_12m,
                 "roic": roic,
                 "roe": roe,
                 "margem": margem,
@@ -168,11 +173,11 @@ def obter_dados_base():
             df = df.fillna(0)
             _CACHE["df"] = df
             _CACHE["updated_at"] = agora
-            print(f"✅ [API] Sucesso Máximo! {len(df)} ações da B3 extraídas dinamicamente.")
+            print(f"✅ [API] {len(df)} ações da B3 calculadas e validadas dinamicamente.")
             return df.copy()
             
     except Exception as e:
-        print(f"🚨 [ERRO CRÍTICO] Falha na comunicação geral: {e}")
+        print(f"🚨 [ERRO CRÍTICO] Falha no processamento: {e}")
         
     return pd.DataFrame()
 
@@ -198,7 +203,6 @@ def get_rankings():
     margem_min = float(request.args.get('margem_min', 0)) / 100
     cagr_min = float(request.args.get('cagr_min', 0)) / 100
 
-    # Filtros Fundamentais
     mask = (df['liquidez'] >= liq_min)
     if pl_max > 0: mask &= (df['pl'] <= pl_max) & (df['pl'] > 0)
     if pvp_max > 0: mask &= (df['pvp'] <= pvp_max) & (df['pvp'] > 0)
@@ -213,7 +217,6 @@ def get_rankings():
 
     if df.empty: return jsonify([])
 
-    # LÓGICA DE RANKING
     if metodo == "graham":
         df = df[(df['lpa'] > 0) & (df['vpa'] > 0)].copy()
         if df.empty: return jsonify([])
@@ -226,8 +229,7 @@ def get_rankings():
         df = df[df['dy'] > 0].copy()
         if df.empty: return jsonify([])
         
-        df['dpa'] = df['preco'] * df['dy']
-        df['preco_teto'] = df['dpa'] / 0.06
+        df['preco_teto'] = df['dpa_12m'] / 0.06
         df['potencial'] = (df['preco_teto'] - df['preco']) / df['preco']
         df = df.sort_values(by='potencial', ascending=False)
 
@@ -246,11 +248,9 @@ def get_rankings():
         df_l = df[df['pl'] > 0].copy()
         if df_l.empty: return jsonify([])
         
-        # Converte crescimento para porcentagem e calcula o PEG Ratio
         df_l['crescimento_pct'] = df_l['crescimento'] * 100.0
         df_l['peg_ratio'] = df_l['pl'] / df_l['crescimento_pct'].replace(0, 1.0)
         
-        # Ordena do menor PEG Ratio para o maior
         df = df_l.sort_values(by='peg_ratio', ascending=True)
         df['potencial'] = df['crescimento']
 
@@ -289,8 +289,8 @@ def get_analise_completa():
     fundamentos_dict = {
         "preco": float(item['preco']), "pl": float(item['pl']), "pvp": float(item['pvp']),
         "lpa": float(item['lpa']), "vpa": float(item['vpa']), "dy": float(item['dy']),
-        "roic": float(item['roic']), "roe": float(item['roe']), "margem": float(item['margem']),
-        "evebit": float(item['evebit']), "crescimento": float(item['crescimento']),
+        "dpa_12m": float(item['dpa_12m']), "roic": float(item['roic']), "roe": float(item['roe']),
+        "margem": float(item['margem']), "evebit": float(item['evebit']), "crescimento": float(item['crescimento']),
         "liquidez": float(item['liquidez']), "patrimonio": float(item.get('patrimonio', 0)),
         "divida_patrimonio": float(item.get('divida_patrimonio', 0)),
         "links": {"site_ri": site_ri, "relatorio_oficial": link_relatorio}
@@ -357,12 +357,8 @@ def get_analise_completa():
                     "ma50": limpa_nulos(ma50),
                     "ma200": limpa_nulos(ma200)
                 }
-        else:
-            print(f"🚨 [GRÁFICO] Yahoo RAW API retornou {r_yahoo.status_code} para {ticker_input}")
-            
     except Exception as e:
-        print(f"🚨 [ERRO CRÍTICO NO GRÁFICO] {ticker_input}: {e}")
-        chart_data = None
+        print(f"🚨 [ERRO NO GRÁFICO] {ticker_input}: {e}")
 
     return jsonify({
         "ticker": ticker_input,

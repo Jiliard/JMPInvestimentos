@@ -208,75 +208,33 @@ async function carregarTickers() {
 }
 
 /* ==============================================================================
-   GERADOR DE DIVIDENDOS E CALENDÁRIO HISTÓRICO
+   GERADOR DE DIVIDENDOS CALCULADOS
    ============================================================================== */
-function gerarModuloProventos(dyDecimal, precoAtual) {
-    const mesesNomes = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-    
-    if (dyDecimal <= 0.005) {
+function gerarModuloProventos(dyDecimal, precoAtual, dpa12m) {
+    if (dyDecimal <= 0.001 || dpa12m <= 0) {
         return `
             <div class="proventos-section">
-                <h4><i data-lucide="coins"></i> Histórico de Proventos & Calendário</h4>
-                <p style="color: #94A3B8; font-size: 0.85rem; margin: 0;">Ativo com baixo histórico de proventos pagos nos últimos 12 meses (DY próximo de 0%).</p>
+                <h4><i data-lucide="coins"></i> Histórico de Proventos Pagos (12M)</h4>
+                <p style="color: #94A3B8; font-size: 0.85rem; margin: 0;">Este ativo não registrou pagamento significativo de proventos nos últimos 12 meses.</p>
             </div>
         `;
     }
 
-    const valorAnualTotal = precoAtual * dyDecimal;
-    const mesesAtivosIndices = [1, 4, 7, 10]; 
-    const valorPorProvento = valorAnualTotal / mesesAtivosIndices.length;
-
-    let htmlCalendario = '<div class="dividend-calendar">';
-    mesesNomes.forEach((m, idx) => {
-        const IsPago = mesesAtivosIndices.includes(idx);
-        htmlCalendario += `
-            <div class="month-card ${IsPago ? 'active-pay' : ''}">
-                <div>${m}</div>
-                <div style="font-size: 0.62rem; margin-top:2px;">${IsPago ? 'PAGO' : '-'}</div>
-            </div>
-        `;
-    });
-    htmlCalendario += '</div>';
-
-    const anoAtual = 2026;
-    let htmlTabela = `
-        <div class="proventos-table-wrapper">
-            <table class="table-proventos">
-                <thead>
-                    <tr>
-                        <th>Tipo</th>
-                        <th>Data COM</th>
-                        <th>Data Pagamento</th>
-                        <th>Valor Bruto</th>
-                        <th>Yield na Época (%)</th>
-                    </tr>
-                </thead>
-                <tbody>
-    `;
-
-    mesesAtivosIndices.reverse().forEach((mesIdx) => {
-        const mesStr = String(mesIdx + 1).padStart(2, '0');
-        const yieldPercent = ((valorPorProvento / precoAtual) * 100).toFixed(2);
-        
-        htmlTabela += `
-            <tr>
-                <td><span style="color: #34D399; font-weight: bold;">Dividendo</span></td>
-                <td>10/${mesStr}/${anoAtual}</td>
-                <td>28/${mesStr}/${anoAtual}</td>
-                <td>R$ ${valorPorProvento.toFixed(2)}</td>
-                <td style="color: #34D399; font-weight: bold;">${yieldPercent}%</td>
-            </tr>
-        `;
-    });
-
-    htmlTabela += '</tbody></table></div>';
-
+    const dyPorcento = (dyDecimal * 100).toFixed(2);
+    
     return `
         <div class="proventos-section">
-            <h4><i data-lucide="coins"></i> Frequência de Pagamento em Meses</h4>
-            ${htmlCalendario}
-            <h4><i data-lucide="history"></i> Proventos Anunciados e Pagos</h4>
-            ${htmlTabela}
+            <h4><i data-lucide="coins"></i> Resumo de Proventos Calculados (Últimos 12 Meses)</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px;">
+                <div style="background: var(--bg-card); padding: 12px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                    <span style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase;">Total Pago por Ação (DPA)</span>
+                    <h3 style="margin: 5px 0 0 0; color: #34D399; font-family: var(--font-mono);">R$ ${dpa12m.toFixed(2)}</h3>
+                </div>
+                <div style="background: var(--bg-card); padding: 12px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                    <span style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase;">Dividend Yield Real</span>
+                    <h3 style="margin: 5px 0 0 0; color: #34D399; font-family: var(--font-mono);">${dyPorcento}%</h3>
+                </div>
+            </div>
         </div>
     `;
 }
@@ -315,7 +273,7 @@ async function carregarAnalise() {
         const fmtP = val => `${(val*100).toFixed(1)}%`;
         const fmtX = val => `${val.toFixed(2)}x`;
 
-        const proventosHtml = gerarModuloProventos(f.dy, f.preco);
+        const proventosHtml = gerarModuloProventos(f.dy, f.preco, f.dpa_12m);
 
         fichaContainer.innerHTML = `
             <div class="raio-x-box">
