@@ -18,7 +18,7 @@ CORS(app)
 database.inicializar_banco()
 
 _CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 900 # Salva em memória por 15 minutos
+CACHE_TTL = 1800 # 30 minutos em memória
 
 def obter_dados_base():
     global _CACHE
@@ -27,24 +27,29 @@ def obter_dados_base():
     if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
         return _CACHE["df"].copy()
         
-    print("⏳ [API] Varrendo a B3 inteira e calculando indicadores brutos...")
+    print("⏳ [API] Varrendo a B3 inteira via TradingView Scanner...")
     
     url_tv = "https://scanner.tradingview.com/brazil/scan"
     
-    # BUSCAMOS APENAS OS DADOS BRUTOS / CONTÁBEIS PRIMÁRIOS
+    # MAPEAMENTO OFICIAL DE COLUNAS DO TRADINGVIEW
     cols = [
-        "name",                                       # 0: Ticker
-        "description",                                # 1: Nome
-        "close",                                      # 2: Cotação Atual (Preço)
-        "volume",                                     # 3: Volume Diário
-        "total_shares_outstanding",                   # 4: Total de Ações
-        "total_revenue",                              # 5: Receita Líquida
-        "net_income",                                 # 6: Lucro Líquido (12M)
-        "total_equity",                               # 7: Patrimônio Líquido
-        "total_debt",                                 # 8: Dívida Total
-        "dividends_paid",                             # 9: Total de Proventos Pagos (12M)
-        "ebitda",                                     # 10: EBITDA
-        "total_revenue_growth_5y"                     # 11: Crescimento Receita (5 Anos)
+        "name",                                    # Ticker
+        "description",                             # Nome da Empresa
+        "close",                                   # Preço da Cotação
+        "volume",                                  # Volume Negociado
+        "price_earnings_ttm",                      # P/L Pronto (TV)
+        "price_book_ratio",                        # P/VP Pronto (TV)
+        "dividend_yield_recent",                   # DY recente % (TV)
+        "return_on_equity",                        # ROE % (TV)
+        "return_on_invested_capital",              # ROIC % (TV)
+        "net_margin",                              # Margem Líquida % (TV)
+        "enterprise_value_ebitda_ttm",             # EV/EBITDA (TV)
+        "earnings_per_share_basic_ttm",            # LPA (TV)
+        "dps_common_stock_prim_issue_fy",          # Dividendo por Ação Real (DPA 12M)
+        "total_revenue_growth_5y",                 # Crescimento Receita 5 Anos (CAGR)
+        "earnings_per_share_diluted_growth_ttm_yoy", # Crescimento Lucro YoY
+        "total_equity",                            # Patrimônio Líquido Total
+        "total_debt"                               # Dívida Total
     ]
     
     payload = {
@@ -65,10 +70,11 @@ def obter_dados_base():
     resultados = []
     
     try:
-        r = requests.post(url_tv, json=payload, headers=headers, timeout=12)
+        r = requests.post(url_tv, json=payload, headers=headers, timeout=20)
         
         if r.status_code != 200:
             print(f"🚨 [ERRO TV] Status {r.status_code}: {r.text}")
+            if _CACHE["df"] is not None: return _CACHE["df"].copy()
             return pd.DataFrame()
             
         dados = r.json()
@@ -84,65 +90,60 @@ def obter_dados_base():
             val = item.get("d", [])
             if not val or len(val) < len(cols):
                 continue
+            
+            # MONTA UM DICIONÁRIO DINÂMICO PARA NUNCA LER A COLUNA ERRADA
+            row_data = dict(zip(cols, val))
+            
+            def get_val(key, padrao=0.0):
+                v = row_data.get(key)
+                if v is None: return padrao
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return padrao
+
+            preco = get_val("close")
+            if preco <= 0.05: continue 
+            
+            nome_empresa = row_data.get("description") if row_data.get("description") else f"Cia {ticker}"
+            volume = get_val("volume")
+            
+            pl = get_val("price_earnings_ttm")
+            pvp = get_val("price_book_ratio")
+            dy = get_val("dividend_yield_recent") / 100.0  # Converte de % para decimal
+            roe = get_val("return_on_equity") / 100.0
+            roic = get_val("return_on_invested_capital") / 100.0
+            margem = get_val("net_margin") / 100.0
+            evebit = get_val("enterprise_value_ebitda_ttm")
+            lpa = get_val("earnings_per_share_basic_ttm")
+            dpa_12m = get_val("dps_common_stock_prim_issue_fy")
+            
+            # Se o DPA vier zerado do TradingView, reconstrói o DPA via (Preço * DY)
+            if dpa_12m <= 0 and dy > 0:
+                dpa_12m = preco * dy
+            elif dpa_12m > 0 and dy <= 0:
+                dy = dpa_12m / preco
                 
-            def seguro(indice, padrao=0.0):
-                if indice < len(val) and val[indice] is not None:
-                    try:
-                        return float(val[indice])
-                    except (ValueError, TypeError):
-                        return padrao
-                return padrao
-
-            # --- 1. DADOS BRUTOS ---
-            preco = seguro(2)
-            if preco <= 0.1: continue 
+            # Cálculo exato do VPA: Preço / P/VP
+            vpa = (preco / pvp) if pvp > 0 else (preco / 1.0)
+            if lpa <= 0 and pl > 0:
+                lpa = preco / pl
             
-            nome_empresa = val[1] if val[1] else f"Cia {ticker}"
-            volume = seguro(3)
-            num_acoes = seguro(4, 1.0)
+            # Crescimento CAGR (Receita 5 Anos ou Fallback YoY do Lucro)
+            crescimento_5y = get_val("total_revenue_growth_5y")
+            crescimento_yoy = get_val("earnings_per_share_diluted_growth_ttm_yoy")
             
-            lucro_liquido = seguro(6, 0.0)
-            patrimonio = seguro(7, 0.0)
-            divida_total = seguro(8, 0.0)
-            proventos_totais_12m = abs(seguro(9, 0.0))
-            ebitda = seguro(10, 0.0)
-            crescimento_5y = seguro(11, 0.0)
-
-            # --- 2. CÁLCULO DOS INDICADORES FINANCEIROS (CÓDIGO PRÓPRIO) ---
-            
-            # A. LPA e VPA
-            lpa = (lucro_liquido / num_acoes) if num_acoes > 0 else 0.0
-            vpa = (patrimonio / num_acoes) if num_acoes > 0 else 0.0
-            
-            # B. P/L e P/VP
-            pl = (preco / lpa) if lpa > 0 else 0.0
-            pvp = (preco / vpa) if vpa > 0 else 0.0
-            
-            # C. Dividend Yield Real Calculado
-            dpa_12m = (proventos_totais_12m / num_acoes) if num_acoes > 0 else 0.0
-            dy = (dpa_12m / preco) if preco > 0 else 0.0
-            
-            # D. ROE e ROIC
-            roe = (lucro_liquido / patrimonio) if patrimonio > 0 else 0.0
-            capital_investido = patrimonio + divida_total
-            roic = (lucro_liquido / capital_investido) if capital_investido > 0 else 0.0
-            
-            # E. Margem Líquida e EV/EBITDA
-            receita = seguro(5, 0.0)
-            margem = (lucro_liquido / receita) if receita > 0 else 0.0
-            
-            valor_de_mercado = preco * num_acoes
-            enterprise_value = valor_de_mercado + divida_total
-            evebit = (enterprise_value / ebitda) if ebitda > 0 else 0.0
-            
-            # F. Taxa de Crescimento Sustentável (g = ROE * Retenção)
-            if crescimento_5y > 0:
-                crescimento = crescimento_5y / 100.0
+            if crescimento_5y != 0:
+                crescimento_bruto = crescimento_5y
+            elif crescimento_yoy != 0:
+                crescimento_bruto = crescimento_yoy
             else:
-                payout = (proventos_totais_12m / lucro_liquido) if lucro_liquido > 0 else 0.4
-                retencao = max(0.0, min(1.0, 1.0 - payout))
-                crescimento = max((roe * retencao), 0.01)
-
+                crescimento_bruto = (roe * 100.0 * 0.5) if roe > 0 else 5.0
+                
+            crescimento = crescimento_bruto / 100.0
+            
+            patrimonio = get_val("total_equity")
+            divida_total = get_val("total_debt")
             liquidez = volume * preco
             divida_patrimonio = (divida_total / patrimonio) if patrimonio > 0 else 0.0
 
@@ -173,11 +174,12 @@ def obter_dados_base():
             df = df.fillna(0)
             _CACHE["df"] = df
             _CACHE["updated_at"] = agora
-            print(f"✅ [API] {len(df)} ações da B3 calculadas e validadas dinamicamente.")
+            print(f"✅ [API] {len(df)} ações da B3 mapeadas e calculadas com sucesso.")
             return df.copy()
             
     except Exception as e:
         print(f"🚨 [ERRO CRÍTICO] Falha no processamento: {e}")
+        if _CACHE["df"] is not None: return _CACHE["df"].copy()
         
     return pd.DataFrame()
 
@@ -193,7 +195,6 @@ def get_rankings():
     df = obter_dados_base()
     if df.empty: return jsonify([])
 
-    # Função de conversão segura para evitar crash em strings vazias (ex: liq_min=)
     def para_float(valor, padrao=0.0):
         if str(valor).strip() in ['', 'None', 'null', 'undefined']:
             return float(padrao)
@@ -212,7 +213,6 @@ def get_rankings():
     margem_min = para_float(request.args.get('margem_min'), 0) / 100
     cagr_min = para_float(request.args.get('cagr_min'), 0) / 100
 
-    # Aplicação flexível dos filtros
     mask = (df['liquidez'] >= liq_min)
     if pl_max > 0: mask &= (df['pl'] <= pl_max) & (df['pl'] > 0)
     if pvp_max > 0: mask &= (df['pvp'] <= pvp_max) & (df['pvp'] > 0)
@@ -227,7 +227,7 @@ def get_rankings():
 
     if df.empty: return jsonify([])
 
-    # METODOLOGIAS DE RANKING
+    # METODOLOGIAS
     if metodo == "graham":
         df = df[(df['lpa'] > 0) & (df['vpa'] > 0)].copy()
         if df.empty: return jsonify([])
