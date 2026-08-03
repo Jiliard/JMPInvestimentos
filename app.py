@@ -31,29 +31,31 @@ def obter_dados_base():
     
     url_tv = "https://scanner.tradingview.com/brazil/scan"
     
+    cols = [
+        "name",                                       # 0: Nome
+        "description",                                # 1: Descrição
+        "close",                                      # 2: Preço
+        "volume",                                     # 3: Volume
+        "price_earnings_ttm",                         # 4: P/L
+        "price_book_ratio",                           # 5: P/VP
+        "dividend_yield_recent",                      # 6: DY
+        "return_on_equity",                           # 7: ROE
+        "return_on_invested_capital",                 # 8: ROIC
+        "net_margin",                                 # 9: Margem
+        "enterprise_value_ebitda_ttm",                # 10: EV/EBITDA
+        "earnings_per_share_basic_ttm",               # 11: LPA
+        "total_revenue_growth_5y",                    # 12: Crescimento Receita 5 Anos
+        "earnings_per_share_diluted_growth_ttm_yoy",  # 13: Crescimento Lucro YoY
+        "total_equity",                               # 14: Patrimônio
+        "total_debt"                                  # 15: Dívida
+    ]
+    
     payload = {
         "markets": ["brazil"],
         "filter": [
             {"left": "type", "operation": "equal", "right": "stock"}
         ],
-        "columns": [
-            "name",                                       # 0: Nome
-            "description",                                # 1: Descrição
-            "close",                                      # 2: Preço
-            "volume",                                     # 3: Volume
-            "price_earnings_ttm",                         # 4: P/L
-            "price_book_ratio",                           # 5: P/VP
-            "dividend_yield_recent",                      # 6: DY
-            "return_on_equity",                           # 7: ROE
-            "return_on_invested_capital",                 # 8: ROIC
-            "net_margin",                                 # 9: Margem
-            "enterprise_value_ebitda_ttm",                # 10: EV/EBITDA
-            "earnings_per_share_basic_ttm",               # 11: LPA
-            "total_revenue_growth_5y",                    # 12: Crescimento Receita 5 Anos (CAGR)
-            "earnings_per_share_diluted_growth_ttm_yoy",  # 13: Crescimento Lucro Anual (Fallback)
-            "total_equity",                               # 14: Patrimônio Líquido
-            "total_debt"                                  # 15: Dívida Total
-        ],
+        "columns": cols,
         "sort": {"sortBy": "volume", "sortOrder": "desc"},
         "range": [0, 500]
     }
@@ -83,12 +85,16 @@ def obter_dados_base():
                 continue
             
             val = item.get("d", [])
-            if not val or len(val) < 16:
+            if not val or len(val) < len(cols):
                 continue
                 
             def seguro(indice, padrao=0.0):
-                if val[indice] is None: return padrao
-                return float(val[indice])
+                if indice < len(val) and val[indice] is not None:
+                    try:
+                        return float(val[indice])
+                    except (ValueError, TypeError):
+                        return padrao
+                return padrao
 
             preco = seguro(2)
             if preco <= 0.1: continue 
@@ -106,18 +112,19 @@ def obter_dados_base():
             lpa = seguro(11, preco / pl if pl > 0 else 0.0)
             vpa = preco / pvp if pvp > 0 else 0.0
             
-            # --- CAPTURA DINÂMICA E FALLBACK DE CRESCIMENTO (CAGR) ---
-            crescimento_5y = seguro(12, 0.0)
-            crescimento_yoy = seguro(13, 0.0)
+            # Captura de crescimento real sem travar em valor fixo estático
+            crescimento_5y = seguro(12, None)
+            crescimento_yoy = seguro(13, None)
             
-            # Prioriza o CAGR de 5 anos; se for zerado/indisponível, usa o crescimento do lucro mais recente
-            crescimento_bruto = crescimento_5y if crescimento_5y > 0 else crescimento_yoy
-            
-            # Se a API não retornar dado de crescimento para o ativo, adota uma taxa conservadora padrão (8.0%)
-            if crescimento_bruto <= 0:
-                crescimento_bruto = 8.0
+            if crescimento_5y is not None and crescimento_5y != 0:
+                crescimento_bruto = crescimento_5y
+            elif crescimento_yoy is not None and crescimento_yoy != 0:
+                crescimento_bruto = crescimento_yoy
+            else:
+                # Se a empresa for nova ou não tiver histórico publicado no TradingView, calcula uma estimativa dinâmica via ROE x Retenção
+                crescimento_bruto = max((roe * 100.0) * 0.6, 1.0) if roe > 0 else 1.0
                 
-            crescimento = crescimento_bruto / 100.0  # Converte em formato decimal
+            crescimento = crescimento_bruto / 100.0  # Em decimal
             
             patrimonio = seguro(14, 0.0)
             divida_total = seguro(15, 0.0)
@@ -229,9 +236,9 @@ def get_rankings():
         df_l = df[df['pl'] > 0].copy()
         if df_l.empty: return jsonify([])
         
-        # Converte a taxa de crescimento para porcentagem e calcula o PEG Ratio
+        # Converte crescimento para porcentagem e calcula o PEG Ratio
         df_l['crescimento_pct'] = df_l['crescimento'] * 100.0
-        df_l['peg_ratio'] = df_l['pl'] / df_l['crescimento_pct']
+        df_l['peg_ratio'] = df_l['pl'] / df_l['crescimento_pct'].replace(0, 1.0)
         
         # Ordena do menor PEG Ratio para o maior
         df = df_l.sort_values(by='peg_ratio', ascending=True)
