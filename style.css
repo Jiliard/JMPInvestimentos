@@ -1,5 +1,5 @@
 /* ==============================================================================
-   DESIGN SYSTEM - JMP INVESTIMENTOS TERMINAL
+   DESIGN SYSTEM - JMP INVESTIMENTOS
    ============================================================================== */
 :root {
     --bg-dark: #07090E;
@@ -14,6 +14,8 @@
     --accent-green-glow: rgba(16, 185, 129, 0.15);
     --accent-green-bright: #34D399;
     --accent-red: #F43F5E;
+    --accent-red-glow: rgba(244, 63, 94, 0.15);
+    --accent-red-bright: #FB7185;
     --accent-blue: #38BDF8;
     
     --text-primary: #F8FAFC;
@@ -42,6 +44,17 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
+/* ESCONDE O SELETOR DE NÚMERO PADRÃO BRANCO (INPUT NUMBER SPINNERS) */
+input[type=number]::-webkit-inner-spin-button, 
+input[type=number]::-webkit-outer-spin-button { 
+    -webkit-appearance: none; 
+    margin: 0; 
+}
+input[type=number] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
 /* ==============================================================================
    1. NAVBAR & BRANDING
    ============================================================================== */
@@ -49,7 +62,7 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background-color: rgba(15, 23, 42, 0.8);
+    background-color: rgba(15, 23, 42, 0.85);
     backdrop-filter: blur(12px);
     padding: 0.8rem 2rem;
     border-bottom: 1px solid var(--border-color);
@@ -84,7 +97,7 @@ body {
 
 .brand-text h1 {
     margin: 0;
-    font-size: 1.1rem;
+    font-size: 1.15rem;
     font-weight: 800;
     letter-spacing: 0.5px;
     color: var(--text-primary);
@@ -94,34 +107,55 @@ body {
     color: var(--accent-green);
 }
 
-.brand-sub {
-    font-size: 0.65rem;
-    color: var(--text-muted);
-    font-weight: 700;
-    letter-spacing: 1px;
-    display: block;
-}
-
+/* STATUS DO MERCADO E RELÓGIO */
 .market-status {
     display: flex;
     align-items: center;
-    gap: 8px;
-    background: rgba(16, 185, 129, 0.08);
-    border: 1px solid rgba(16, 185, 129, 0.2);
+    gap: 10px;
     padding: 6px 14px;
     border-radius: 20px;
-    font-size: 0.75rem;
+    font-size: 0.78rem;
     font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.market-status.open {
+    background: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.25);
     color: var(--accent-green-bright);
+}
+
+.market-status.closed {
+    background: rgba(244, 63, 94, 0.08);
+    border: 1px solid rgba(244, 63, 94, 0.25);
+    color: var(--accent-red-bright);
 }
 
 .status-dot {
     width: 8px;
     height: 8px;
-    background-color: var(--accent-green-bright);
     border-radius: 50%;
+}
+
+.market-status.open .status-dot {
+    background-color: var(--accent-green-bright);
     box-shadow: 0 0 8px var(--accent-green-bright);
     animation: blink 2s infinite;
+}
+
+.market-status.closed .status-dot {
+    background-color: var(--accent-red-bright);
+    box-shadow: 0 0 8px var(--accent-red-bright);
+}
+
+.status-divider {
+    color: var(--border-color-light);
+}
+
+.clock-display {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.5px;
 }
 
 @keyframes blink {
@@ -172,7 +206,7 @@ body {
 }
 
 /* ==============================================================================
-   2. CONTAINERS E CONTROLES
+   2. CONTAINERS, FORMULÁRIOS E TOOLTIPS
    ============================================================================== */
 .container {
     padding: 2rem;
@@ -208,10 +242,58 @@ label {
     letter-spacing: 0.5px;
 }
 
+/* TOOLTIPS MODERNAS */
 .tooltip {
-    color: var(--accent-green);
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
     cursor: help;
-    font-size: 0.9rem;
+    transition: color 0.2s ease;
+}
+
+.tooltip svg {
+    width: 14px;
+    height: 14px;
+}
+
+.tooltip:hover {
+    color: var(--accent-green-bright);
+}
+
+.tooltip::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 130%;
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    background-color: var(--bg-surface-hover);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color-light);
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: normal;
+    white-space: normal;
+    width: max-content;
+    max-width: 240px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.7);
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 1000;
+    text-align: center;
+    line-height: 1.4;
+}
+
+.tooltip:hover::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
 }
 
 input, select {
@@ -338,7 +420,7 @@ summary {
 }
 
 /* ==============================================================================
-   4. TABELA FINANCEIRA DE ALTA PRECISÃO
+   4. TABELA FINANCEIRA
    ============================================================================== */
 .table-wrapper {
     background: var(--bg-card);
@@ -370,7 +452,6 @@ th {
     letter-spacing: 0.5px;
 }
 
-/* Formatação Numérica Tabular */
 td {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
@@ -378,7 +459,7 @@ td {
 }
 
 td:nth-child(3) {
-    font-family: var(--font-main); /* Nome da empresa em fonte normal */
+    font-family: var(--font-main);
     font-weight: 600;
 }
 

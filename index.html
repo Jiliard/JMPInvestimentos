@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JMP Investimentos | Terminal de Decisão B3</title>
+    <title>JMP Investimentos</title>
 
     <!-- Fontes Financeiras Profissionais -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -24,7 +24,6 @@
             </div>
             <div class="brand-text">
                 <h1>JMP <span>INVESTIMENTOS</span></h1>
-                <span class="brand-sub">TERMINAL B3 & VALUATION</span>
             </div>
         </div>
 
@@ -37,9 +36,11 @@
             </button>
         </nav>
 
-        <div class="market-status">
+        <div id="market-status" class="market-status closed">
             <span class="status-dot"></span>
-            <span class="status-text">B3 Mercado Ativo</span>
+            <span id="status-text" class="status-text">B3 Mercado Fechado</span>
+            <span class="status-divider">|</span>
+            <span id="clock-display" class="clock-display">00:00:00 - --/--/----</span>
         </div>
     </header>
 
@@ -50,8 +51,10 @@
             <section class="top-controls">
                 <div class="filter-group select-strategy">
                     <label>
-                        Estratégia de Valuations
-                        <span class="tooltip" id="tooltip-metodo" title="Benjamin Graham: Calcula o valor intrínseco baseado no patrimônio e lucro da empresa.">ⓘ</span>
+                        Estratégia de Ranking
+                        <span class="tooltip" id="tooltip-metodo" data-tooltip="Benjamin Graham: Calcula o valor intrínseco baseado no patrimônio e lucro da empresa.">
+                            <i data-lucide="help-circle"></i>
+                        </span>
                     </label>
                     <div class="select-wrapper">
                         <select id="metodo" onchange="atualizarTooltipMetodo(); carregarDados();">
@@ -64,7 +67,12 @@
                 </div>
 
                 <div class="filter-group">
-                    <label>Liquidez Mínima (R$)</label>
+                    <label>
+                        Liquidez Mínima (R$)
+                        <span class="tooltip" data-tooltip="Volume financeiro médio negociado diariamente para evitar ações sem liquidez.">
+                            <i data-lucide="help-circle"></i>
+                        </span>
+                    </label>
                     <input type="number" id="liq_min" value="100000" step="100000" onchange="carregarDados()">
                 </div>
             </section>
@@ -78,31 +86,66 @@
                 </summary>
                 <div class="filtros-grid">
                     <div class="filter-group">
-                        <label>P/L Máximo <span class="tooltip" title="Preço sobre Lucro.">ⓘ</span></label>
+                        <label>
+                            P/L Máximo
+                            <span class="tooltip" data-tooltip="Preço sobre Lucro. Quantos anos levaria para reaver o capital através dos lucros.">
+                                <i data-lucide="help-circle"></i>
+                            </span>
+                        </label>
                         <input type="number" id="pl_max" value="30" onchange="carregarDados()">
                     </div>
                     <div class="filter-group">
-                        <label>P/VP Máximo <span class="tooltip" title="Preço sobre Valor Patrimonial.">ⓘ</span></label>
+                        <label>
+                            P/VP Máximo
+                            <span class="tooltip" data-tooltip="Preço sobre Valor Patrimonial. Relação entre preço da ação e patrimônio líquido.">
+                                <i data-lucide="help-circle"></i>
+                            </span>
+                        </label>
                         <input type="number" id="pvp_max" value="3" onchange="carregarDados()">
                     </div>
                     <div class="filter-group">
-                        <label>DY Mínimo (%) <span class="tooltip" title="Dividend Yield nos últimos 12M.">ⓘ</span></label>
+                        <label>
+                            DY Mínimo (%)
+                            <span class="tooltip" data-tooltip="Dividend Yield. Rendimento percentual de dividendos nos últimos 12 meses.">
+                                <i data-lucide="help-circle"></i>
+                            </span>
+                        </label>
                         <input type="number" id="dy_min" value="0" onchange="carregarDados()">
                     </div>
                     <div class="filter-group">
-                        <label>ROE Mínimo (%) <span class="tooltip" title="Retorno sobre Patrimônio Líquido.">ⓘ</span></label>
+                        <label>
+                            ROE Mínimo (%)
+                            <span class="tooltip" data-tooltip="Retorno sobre Patrimônio Líquido. Capacidade de gerar lucro com capital próprio.">
+                                <i data-lucide="help-circle"></i>
+                            </span>
+                        </label>
                         <input type="number" id="roe_min" value="0" onchange="carregarDados()">
                     </div>
                     <div class="filter-group">
-                        <label>ROIC Mínimo (%) <span class="tooltip" title="Retorno sobre Capital Investido.">ⓘ</span></label>
+                        <label>
+                            ROIC Mínimo (%)
+                            <span class="tooltip" data-tooltip="Retorno sobre Capital Investido. Eficiência operacional considerando dívidas e capital próprio.">
+                                <i data-lucide="help-circle"></i>
+                            </span>
+                        </label>
                         <input type="number" id="roic_min" value="0" onchange="carregarDados()">
                     </div>
                     <div class="filter-group">
-                        <label>Margem Mínima (%) <span class="tooltip" title="Margem Líquida.">ⓘ</span></label>
+                        <label>
+                            Margem Mínima (%)
+                            <span class="tooltip" data-tooltip="Margem Líquida. Porcentagem de lucro obtido sobre cada real faturado.">
+                                <i data-lucide="help-circle"></i>
+                            </span>
+                        </label>
                         <input type="number" id="margem_min" value="0" onchange="carregarDados()">
                     </div>
                     <div class="filter-group">
-                        <label>Cresc. 5a Mínimo (%) <span class="tooltip" title="CAGR da receita em 5 anos.">ⓘ</span></label>
+                        <label>
+                            Cresc. 5a Mínimo (%)
+                            <span class="tooltip" data-tooltip="CAGR. Taxa composta anual de crescimento da receita nos últimos 5 anos.">
+                                <i data-lucide="help-circle"></i>
+                            </span>
+                        </label>
                         <input type="number" id="cagr_min" value="0" onchange="carregarDados()">
                     </div>
                 </div>
@@ -190,7 +233,7 @@
                     <div class="placeholder-box">
                         <i data-lucide="search-code" style="width: 48px; height: 48px; color: #4B5563;"></i>
                         <h3>Nenhum ativo selecionado</h3>
-                        <p>Busque um ticker no campo acima para carregar o Raio-X fundamentalista e o gráfico técnico.</p>
+                        <p>Busque um ticker no campo acima para carregar os fundamentos e o gráfico técnico.</p>
                     </div>
                 </div>
 

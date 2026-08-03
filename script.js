@@ -2,6 +2,50 @@ let dadosGlobais = [];
 let paginaAtual = 1;
 const itensPorPagina = 20;
 
+/* ==============================================================================
+   RELOGIO EM TEMPO REAL E STATUS DO MERCADO B3
+   ============================================================================== */
+function atualizarRelogioEMercado() {
+    const agora = new Date();
+    
+    // Converte para o horário oficial de Brasília
+    const opcoesData = { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' };
+    const opcoesHora = { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+    
+    const dataStr = agora.toLocaleDateString('pt-BR', opcoesData);
+    const horaStr = agora.toLocaleTimeString('pt-BR', opcoesHora);
+    
+    document.getElementById('clock-display').innerText = `${horaStr} - ${dataStr}`;
+    
+    // Lógica B3: Funcionamento das 10:00 às 17:55 (Segunda a Sexta)
+    const diaSemana = agora.getDay(); // 0 = Domingo, 6 = Sábado
+    const horas = agora.getHours();
+    const minutos = agora.getMinutes();
+    const tempoEmMinutos = horas * 60 + minutos;
+    
+    const inicioMercado = 10 * 60;        // 10:00 (600 min)
+    const fimMercado = 17 * 60 + 55;      // 17:55 (1075 min)
+    
+    const mercadoAberto = (diaSemana >= 1 && diaSemana <= 5) && (tempoEmMinutos >= inicioMercado && tempoEmMinutos <= fimMercado);
+    
+    const statusBox = document.getElementById('market-status');
+    const statusText = document.getElementById('status-text');
+    
+    if (mercadoAberto) {
+        statusBox.className = "market-status open";
+        statusText.innerText = "B3 Mercado Ativo";
+    } else {
+        statusBox.className = "market-status closed";
+        statusText.innerText = "B3 Mercado Fechado";
+    }
+}
+
+setInterval(atualizarRelogioEMercado, 1000);
+atualizarRelogioEMercado();
+
+/* ==============================================================================
+   NAVEGAÇÃO E TOOLTIPS
+   ============================================================================== */
 function mudarAba(aba) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.aba-content').forEach(c => c.classList.remove('active'));
@@ -21,16 +65,19 @@ function atualizarTooltipMetodo() {
     const tt = document.getElementById('tooltip-metodo');
     
     if(m === 'graham') {
-        tt.title = "Benjamin Graham: Calcula o valor intrínseco baseado no patrimônio e lucro da empresa, ordenando pela margem de segurança.";
+        tt.setAttribute('data-tooltip', "Benjamin Graham: Calcula o valor intrínseco baseado no patrimônio e lucro da empresa.");
     } else if(m === 'bazin') {
-        tt.title = "Décio Bazin: Focado em renda passiva, calcula o Preço Teto para garantir um retorno de dividendos mínimo de 6% ao ano.";
+        tt.setAttribute('data-tooltip', "Décio Bazin: Focado em renda passiva, calcula o Preço Teto para garantir dividendo mínimo de 6% a.a.");
     } else if(m === 'greenblatt') {
-        tt.title = "Joel Greenblatt: Ranqueia as empresas combinando alta rentabilidade operacional com baixo múltiplo de preço.";
+        tt.setAttribute('data-tooltip', "Joel Greenblatt: Magic Formula combinando alta rentabilidade com baixo múltiplo.");
     } else if(m === 'lynch') {
-        tt.title = "Peter Lynch: Identifica ações de crescimento negociadas a preços razoáveis dividindo o P/L pelo crescimento da receita.";
+        tt.setAttribute('data-tooltip', "Peter Lynch: Identifica ações de crescimento dividindo o P/L pelo crescimento da receita (PEG).");
     }
 }
 
+/* ==============================================================================
+   CONSULTA E RENDERIZAÇÃO DA TABELA
+   ============================================================================== */
 async function carregarDados() {
     const tbody = document.querySelector('#tabela-resultados tbody');
     tbody.innerHTML = `<tr><td colspan="13"><div class="spinner-box"><div class="spinner"></div><strong>Consultando base de dados do mercado...</strong></div></td></tr>`;
@@ -73,7 +120,7 @@ async function carregarDados() {
 
         renderizarTabela();
     } catch (error) {
-        tbody.innerHTML = `<tr><td colspan="13"><div class="placeholder-box"><h3 style="color:#ef5350;">Aguardando Servidor</h3><p>O servidor está iniciando. Atualize a página em alguns segundos.</p></div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="13"><div class="placeholder-box"><h3 style="color:#ef5350;">Aguardando Servidor</h3><p>O servidor está iniciando no Render. Atualize em alguns segundos.</p></div></td></tr>`;
     }
 }
 
@@ -81,6 +128,25 @@ function renderizarTabela() {
     const tbody = document.querySelector('#tabela-resultados tbody');
     tbody.innerHTML = '';
     
+    // AVISO QUANDO RETORNAR 0 ATIVOS (FILTROS MUITO RÍGIDOS)
+    if (!dadosGlobais || dadosGlobais.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="13">
+                    <div class="placeholder-box">
+                        <i data-lucide="filter-x" style="width: 48px; height: 48px; color: #E11D48;"></i>
+                        <h3 style="color: #F8FAFC; margin: 5px 0 0 0;">Nenhum ativo encontrado</h3>
+                        <p style="color: #94A3B8; font-size: 0.85rem; max-width: 450px; margin: 0 auto;">Nenhuma ação atendeu a todos os critérios de filtro simultaneamente. Tente flexibilizar a Liquidez, P/L Máximo ou outros parâmetros.</p>
+                    </div>
+                </td>
+            </tr>
+        `;
+        if (window.lucide) lucide.createIcons();
+        document.getElementById('pag-info').innerText = "Exibindo 0-0 de 0 ativos";
+        document.getElementById('pag-atual').innerText = "Página 1";
+        return;
+    }
+
     const inicio = (paginaAtual - 1) * itensPorPagina;
     const fim = inicio + itensPorPagina;
     const itens = dadosGlobais.slice(inicio, fim);
@@ -126,6 +192,7 @@ function renderizarTabela() {
 
     document.getElementById('pag-info').innerText = `Exibindo ${dadosGlobais.length ? inicio + 1 : 0}-${Math.min(fim, dadosGlobais.length)} de ${dadosGlobais.length} ativos`;
     document.getElementById('pag-atual').innerText = `Página ${paginaAtual}`;
+    if (window.lucide) lucide.createIcons();
 }
 
 function mudarPagina(direcao) {
