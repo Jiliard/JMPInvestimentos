@@ -126,7 +126,6 @@ function renderizarTabela() {
     const tbody = document.querySelector('#tabela-resultados tbody');
     tbody.innerHTML = '';
     
-    // AVISO QUANDO RETORNAR 0 ATIVOS (SEM A SUGESTÃO DE PARÂMETROS)
     if (!dadosGlobais || dadosGlobais.length === 0) {
         tbody.innerHTML = `
             <tr>
@@ -214,7 +213,6 @@ async function carregarTickers() {
 function gerarModuloProventos(dyDecimal, precoAtual) {
     const mesesNomes = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
     
-    // Identifica se a empresa costuma pagar dividendos
     if (dyDecimal <= 0.005) {
         return `
             <div class="proventos-section">
@@ -225,8 +223,6 @@ function gerarModuloProventos(dyDecimal, precoAtual) {
     }
 
     const valorAnualTotal = precoAtual * dyDecimal;
-    
-    // Simula mes de pagamentos típicos de ações brasileiras (Fev, Mai, Ago, Nov)
     const mesesAtivosIndices = [1, 4, 7, 10]; 
     const valorPorProvento = valorAnualTotal / mesesAtivosIndices.length;
 
@@ -236,26 +232,26 @@ function gerarModuloProventos(dyDecimal, precoAtual) {
         htmlCalendario += `
             <div class="month-card ${IsPago ? 'active-pay' : ''}">
                 <div>${m}</div>
-                <div style="font-size: 0.65rem; margin-top:2px;">${IsPago ? 'PAGO' : '-'}</div>
+                <div style="font-size: 0.62rem; margin-top:2px;">${IsPago ? 'PAGO' : '-'}</div>
             </div>
         `;
     });
     htmlCalendario += '</div>';
 
-    // Monta tabela histórica recente
     const anoAtual = 2026;
     let htmlTabela = `
-        <table class="table-proventos">
-            <thead>
-                <tr>
-                    <th>Tipo</th>
-                    <th>Data COM</th>
-                    <th>Data Pagamento</th>
-                    <th>Valor Bruto</th>
-                    <th>Yield na Época (%)</th>
-                </tr>
-            </thead>
-            <tbody>
+        <div class="proventos-table-wrapper">
+            <table class="table-proventos">
+                <thead>
+                    <tr>
+                        <th>Tipo</th>
+                        <th>Data COM</th>
+                        <th>Data Pagamento</th>
+                        <th>Valor Bruto</th>
+                        <th>Yield na Época (%)</th>
+                    </tr>
+                </thead>
+                <tbody>
     `;
 
     mesesAtivosIndices.reverse().forEach((mesIdx) => {
@@ -273,7 +269,7 @@ function gerarModuloProventos(dyDecimal, precoAtual) {
         `;
     });
 
-    htmlTabela += '</tbody></table>';
+    htmlTabela += '</tbody></table></div>';
 
     return `
         <div class="proventos-section">

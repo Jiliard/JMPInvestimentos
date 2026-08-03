@@ -1,5 +1,5 @@
 /* ==============================================================================
-   DESIGN SYSTEM - JMP INVESTIMENTOS (FLUIDO E SEM SCROLL HORIZONTAL)
+   DESIGN SYSTEM - JMP INVESTIMENTOS (RESPONSIVO PARA MOBILE)
    ============================================================================== */
 :root {
     --bg-dark: #07090E;
@@ -34,7 +34,7 @@
 html, body {
     width: 100%;
     max-width: 100vw;
-    overflow-x: hidden; /* TRAVA DEFINITIVA DE SCROLL HORIZONTAL NA PÁGINA */
+    overflow-x: hidden;
     margin: 0;
     padding: 0;
     background-color: var(--bg-dark);
@@ -66,7 +66,7 @@ input[type=number] {
     align-items: center;
     background-color: rgba(15, 23, 42, 0.85);
     backdrop-filter: blur(12px);
-    padding: 0.8rem 2rem;
+    padding: 0.8rem 1.5rem;
     border-bottom: 1px solid var(--border-color);
     position: sticky;
     top: 0;
@@ -77,12 +77,12 @@ input[type=number] {
 .brand-container {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
 }
 
 .brand-logo-wrapper {
-    width: 38px;
-    height: 38px;
+    width: 36px;
+    height: 36px;
     background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(16, 185, 129, 0.05));
     border: 1px solid var(--accent-green);
     border-radius: var(--radius-md);
@@ -94,13 +94,13 @@ input[type=number] {
 
 .brand-icon {
     color: var(--accent-green-bright);
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
 }
 
 .brand-text h1 {
     margin: 0;
-    font-size: 1.15rem;
+    font-size: 1.1rem;
     font-weight: 800;
     letter-spacing: 0.5px;
     color: var(--text-primary);
@@ -113,10 +113,10 @@ input[type=number] {
 .market-status {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 6px 14px;
+    gap: 8px;
+    padding: 6px 12px;
     border-radius: 20px;
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     font-weight: 600;
     transition: all 0.3s ease;
 }
@@ -160,7 +160,7 @@ input[type=number] {
 
 .nav-pills {
     display: flex;
-    gap: 6px;
+    gap: 4px;
     background: var(--bg-dark);
     padding: 4px;
     border-radius: var(--radius-md);
@@ -171,15 +171,15 @@ input[type=number] {
     background: transparent;
     border: none;
     color: var(--text-secondary);
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     font-weight: 600;
     cursor: pointer;
-    padding: 8px 16px;
+    padding: 8px 14px;
     border-radius: var(--radius-sm);
     transition: all 0.2s ease;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
 }
 
 .tab-btn svg { width: 16px; height: 16px; }
@@ -193,10 +193,10 @@ input[type=number] {
 }
 
 /* ==============================================================================
-   2. CONTAINERS E FORMULÁRIOS FLEXÍVEIS
+   2. CONTAINERS E FORMULÁRIOS
    ============================================================================== */
 .container {
-    padding: 1.5rem;
+    padding: 1.2rem;
     width: 100%;
     max-width: 100vw;
 }
@@ -207,11 +207,11 @@ input[type=number] {
 .top-controls {
     display: flex;
     gap: 15px;
-    margin-bottom: 20px;
+    margin-bottom: 15px;
     flex-wrap: wrap;
 }
 
-.select-strategy { flex: 1 1 300px; }
+.select-strategy { flex: 1 1 280px; }
 
 .filter-group {
     display: flex;
@@ -237,7 +237,6 @@ label {
     justify-content: center;
     color: var(--text-muted);
     cursor: help;
-    transition: color 0.2s ease;
 }
 
 .tooltip svg { width: 14px; height: 14px; }
@@ -260,12 +259,12 @@ label {
     letter-spacing: normal;
     white-space: normal;
     width: max-content;
-    max-width: 240px;
+    max-width: 220px;
     box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.7);
     pointer-events: none;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.2s ease, transform 0.2s ease;
+    transition: opacity 0.2s ease;
     z-index: 1000;
     text-align: center;
     line-height: 1.4;
@@ -324,9 +323,9 @@ input:focus, select:focus {
 }
 
 summary {
-    padding: 14px 20px;
+    padding: 12px 18px;
     font-weight: 700;
-    font-size: 0.88rem;
+    font-size: 0.85rem;
     cursor: pointer;
     color: var(--text-primary);
     display: flex;
@@ -339,7 +338,7 @@ summary {
 .summary-title {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     color: var(--accent-green-bright);
 }
 
@@ -347,7 +346,7 @@ summary {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     gap: 12px;
-    padding: 18px;
+    padding: 16px;
 }
 
 /* ==============================================================================
@@ -355,15 +354,15 @@ summary {
    ============================================================================== */
 .metrics-container {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 15px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
     margin-bottom: 20px;
 }
 
 .metric-card {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
-    padding: 16px;
+    padding: 14px;
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-card);
 }
@@ -376,29 +375,31 @@ summary {
 
 .metric-card span {
     color: var(--text-secondary);
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     font-weight: 600;
     text-transform: uppercase;
 }
 
-.metric-icon { color: var(--accent-green); width: 18px; height: 18px; opacity: 0.8; }
+.metric-icon { color: var(--accent-green); width: 16px; height: 16px; opacity: 0.8; }
 
 .metric-card h2 {
     color: var(--text-primary);
-    margin: 8px 0 0 0;
-    font-size: 1.6rem;
+    margin: 6px 0 0 0;
+    font-size: 1.4rem;
     font-family: var(--font-mono);
     font-weight: 700;
 }
 
 /* ==============================================================================
-   4. TABELA FINANCEIRA FLUIDA (LAYOUT COMPACTO & SEM SCROLL)
+   4. TABELA FINANCEIRA
    ============================================================================== */
 .table-wrapper {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     width: 100%;
+    overflow-x: auto; /* ROLAGEM SÓ NA TABELA QUANDO NECESSÁRIO NO MOBILE */
+    -webkit-overflow-scrolling: touch;
     box-shadow: var(--shadow-card);
 }
 
@@ -407,11 +408,11 @@ table {
     border-collapse: collapse;
     font-size: 0.82rem;
     text-align: left;
-    table-layout: auto;
+    min-width: 750px; /* GARANTE QUE A TABELA NÃO FIQUE ESMAGADA EM TELAS PEQUENAS */
 }
 
 th, td {
-    padding: 10px 8px;
+    padding: 10px 12px;
     border-bottom: 1px solid var(--border-color);
     white-space: nowrap;
 }
@@ -434,7 +435,6 @@ td {
 td:nth-child(3) {
     font-family: var(--font-main);
     font-weight: 600;
-    white-space: normal; /* Permite quebrar nome longo se a tela for estreita */
 }
 
 tr:hover { background-color: var(--bg-surface-hover); }
@@ -468,7 +468,7 @@ tr:hover { background-color: var(--bg-surface-hover); }
     align-items: center;
     margin-top: 15px;
     background: var(--bg-card);
-    padding: 12px 18px;
+    padding: 12px 16px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
     font-size: 0.82rem;
@@ -480,7 +480,7 @@ tr:hover { background-color: var(--bg-surface-hover); }
 .pag-controls {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
 .pag-controls button {
@@ -497,43 +497,43 @@ tr:hover { background-color: var(--bg-surface-hover); }
 }
 
 /* ==============================================================================
-   5. MODULO DE DIVIDENDOS E HISTÓRICO PROVENTOS
+   5. MÓDULO DE DIVIDENDOS E RAIO-X
    ============================================================================== */
 .proventos-section {
-    margin-top: 25px;
+    margin-top: 20px;
     background: var(--bg-surface);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    padding: 20px;
+    padding: 16px;
 }
 
 .proventos-section h4 {
-    margin: 0 0 15px 0;
+    margin: 0 0 12px 0;
     color: var(--accent-green-bright);
-    font-size: 0.95rem;
+    font-size: 0.88rem;
     text-transform: uppercase;
     display: flex;
     align-items: center;
     gap: 8px;
     border-bottom: 1px solid var(--border-color);
-    padding-bottom: 8px;
+    padding-bottom: 6px;
 }
 
-/* Calendário de Meses de Pagamento */
+/* CALENDÁRIO DE DIVIDENDOS FLUIDO */
 .dividend-calendar {
     display: grid;
-    grid-template-columns: repeat(12, 1fr);
+    grid-template-columns: repeat(6, 1fr); /* 2 LINHAS DE 6 MESES NO MOBILE */
     gap: 6px;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
 }
 
 .month-card {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
-    padding: 10px 4px;
+    padding: 8px 2px;
     text-align: center;
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     font-weight: 700;
     color: var(--text-muted);
 }
@@ -544,29 +544,26 @@ tr:hover { background-color: var(--bg-surface-hover); }
     color: var(--accent-green-bright);
 }
 
-/* Tabela de Histórico de Provendos */
+.proventos-table-wrapper {
+    overflow-x: auto;
+    width: 100%;
+}
+
 .table-proventos {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
+    min-width: 480px;
 }
 
-.table-proventos th {
-    background: var(--bg-card);
-    padding: 8px 10px;
-}
+.table-proventos th { background: var(--bg-card); padding: 8px; }
+.table-proventos td { padding: 8px; border-bottom: 1px solid var(--border-color); }
 
-.table-proventos td {
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--border-color);
-}
-
-/* FICHA RAIO-X COMPACTA */
 .raio-x-box {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
-    padding: 24px;
+    padding: 20px;
 }
 
 .raio-x-header {
@@ -574,28 +571,28 @@ tr:hover { background-color: var(--bg-surface-hover); }
     align-items: center;
     justify-content: space-between;
     border-bottom: 1px solid var(--border-color);
-    padding-bottom: 18px;
-    margin-bottom: 20px;
+    padding-bottom: 16px;
+    margin-bottom: 18px;
     flex-wrap: wrap;
-    gap: 15px;
+    gap: 12px;
 }
 
-.raio-x-title { display: flex; align-items: center; gap: 14px; }
+.raio-x-title { display: flex; align-items: center; gap: 12px; }
 
 .raio-x-title img {
-    width: 48px;
-    height: 48px;
+    width: 42px;
+    height: 42px;
     border-radius: 50%;
     border: 2px solid var(--accent-green);
     background: white;
     padding: 2px;
 }
 
-.raio-x-title h2 { margin: 0; font-size: 1.4rem; font-weight: 800; }
+.raio-x-title h2 { margin: 0; font-size: 1.3rem; font-weight: 800; }
 
 .raio-x-preco h3 {
     margin: 0;
-    font-size: 1.8rem;
+    font-size: 1.6rem;
     font-family: var(--font-mono);
     color: var(--accent-green-bright);
 }
@@ -604,20 +601,20 @@ tr:hover { background-color: var(--bg-surface-hover); }
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 15px;
-    margin-bottom: 20px;
+    margin-bottom: 18px;
 }
 
 .raio-x-section {
     background: var(--bg-surface);
     border: 1px solid var(--border-color);
-    padding: 15px;
+    padding: 14px;
     border-radius: var(--radius-md);
 }
 
 .raio-x-section h4 {
-    margin: 0 0 12px 0;
+    margin: 0 0 10px 0;
     color: var(--accent-green-bright);
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     text-transform: uppercase;
     border-bottom: 1px solid var(--border-color);
     padding-bottom: 6px;
@@ -627,7 +624,7 @@ tr:hover { background-color: var(--bg-surface-hover); }
     display: flex;
     justify-content: space-between;
     margin-bottom: 8px;
-    font-size: 0.82rem;
+    font-size: 0.8rem;
 }
 
 .raio-x-val { font-family: var(--font-mono); font-weight: 700; }
@@ -635,12 +632,14 @@ tr:hover { background-color: var(--bg-surface-hover); }
 .btn-ri, .btn-relatorio {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    padding: 8px 16px;
+    padding: 8px 14px;
     border-radius: var(--radius-sm);
     font-weight: 700;
     text-decoration: none;
     font-size: 0.8rem;
+    flex: 1;
 }
 
 .btn-ri { background: var(--bg-surface); color: var(--accent-green-bright); border: 1px solid var(--border-color); }
@@ -651,7 +650,7 @@ tr:hover { background-color: var(--bg-surface-hover); }
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 45px 15px;
+    padding: 40px 15px;
     gap: 10px;
     color: var(--text-muted);
     text-align: center;
@@ -667,3 +666,72 @@ tr:hover { background-color: var(--bg-surface-hover); }
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ==============================================================================
+   6. MEDIA QUERIES (ADAPTAÇÃO RESPONSIVA PARA SMARTPHONES)
+   ============================================================================== */
+@media (max-width: 768px) {
+    .navbar {
+        flex-direction: column;
+        gap: 12px;
+        padding: 0.8rem 1rem;
+    }
+    
+    .brand-container {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .nav-pills {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .tab-btn {
+        flex: 1;
+        justify-content: center;
+        padding: 8px 10px;
+        font-size: 0.78rem;
+    }
+
+    .market-status {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .container {
+        padding: 0.8rem;
+    }
+
+    .metrics-container {
+        grid-template-columns: repeat(2, 1fr); /* 2 CARDS POR LINHA NO CELULAR */
+        gap: 10px;
+    }
+
+    .metric-card {
+        padding: 12px;
+    }
+
+    .metric-card h2 {
+        font-size: 1.3rem;
+    }
+
+    .filtros-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        padding: 12px;
+    }
+
+    .dividend-calendar {
+        grid-template-columns: repeat(4, 1fr); /* 4 MESES POR LINHA EM CELULARES MENORES */
+    }
+
+    .raio-x-actions {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .btn-ri, .btn-relatorio {
+        width: 100%;
+    }
+}
