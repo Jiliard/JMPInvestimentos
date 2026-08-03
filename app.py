@@ -193,16 +193,26 @@ def get_rankings():
     df = obter_dados_base()
     if df.empty: return jsonify([])
 
-    metodo = request.args.get('metodo', 'graham')
-    liq_min = float(request.args.get('liq_min', 100000))
-    pl_max = float(request.args.get('pl_max', 30))
-    pvp_max = float(request.args.get('pvp_max', 3))
-    dy_min = float(request.args.get('dy_min', 0)) / 100
-    roe_min = float(request.args.get('roe_min', 0)) / 100
-    roic_min = float(request.args.get('roic_min', 0)) / 100
-    margem_min = float(request.args.get('margem_min', 0)) / 100
-    cagr_min = float(request.args.get('cagr_min', 0)) / 100
+    # Função de conversão segura para evitar crash em strings vazias (ex: liq_min=)
+    def para_float(valor, padrao=0.0):
+        if str(valor).strip() in ['', 'None', 'null', 'undefined']:
+            return float(padrao)
+        try:
+            return float(valor)
+        except (ValueError, TypeError):
+            return float(padrao)
 
+    metodo = request.args.get('metodo', 'graham')
+    liq_min = para_float(request.args.get('liq_min'), 0)
+    pl_max = para_float(request.args.get('pl_max'), 0)
+    pvp_max = para_float(request.args.get('pvp_max'), 0)
+    dy_min = para_float(request.args.get('dy_min'), 0) / 100
+    roe_min = para_float(request.args.get('roe_min'), 0) / 100
+    roic_min = para_float(request.args.get('roic_min'), 0) / 100
+    margem_min = para_float(request.args.get('margem_min'), 0) / 100
+    cagr_min = para_float(request.args.get('cagr_min'), 0) / 100
+
+    # Aplicação flexível dos filtros
     mask = (df['liquidez'] >= liq_min)
     if pl_max > 0: mask &= (df['pl'] <= pl_max) & (df['pl'] > 0)
     if pvp_max > 0: mask &= (df['pvp'] <= pvp_max) & (df['pvp'] > 0)
@@ -217,6 +227,7 @@ def get_rankings():
 
     if df.empty: return jsonify([])
 
+    # METODOLOGIAS DE RANKING
     if metodo == "graham":
         df = df[(df['lpa'] > 0) & (df['vpa'] > 0)].copy()
         if df.empty: return jsonify([])
