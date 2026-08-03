@@ -226,18 +226,15 @@ def get_rankings():
 
     # D. PETER LYNCH: GARP (PEG Ratio = (P/L) / Growth_pct) | Menor PEG é melhor (PEG < 1.0)
     elif metodo == "lynch":
-        # Filtra empresas que possuem P/L positivo e Crescimento positivo (> 0)
-        df_l = df[(df['pl'] > 0) & (df['crescimento'] > 0)].copy()
+        # Garante que o dataframe não fique vazio mesmo se o crescimento estiver zerado
+        df_l = df[df['pl'] > 0].copy()
         
-        # O crescimento está em formato decimal (ex: 0.15 para 15%), convertemos para porcentagem inteira (* 100)
-        # PEG Ratio = (P/L) / (Taxa de Crescimento Anual em %)
-        df_l['peg_ratio'] = df_l['pl'] / (df_l['crescimento'] * 100)
+        # Evita divisão por zero e calcula o PEG Ratio
+        df_l['crescimento_adj'] = df_l['crescimento'].apply(lambda x: x if x > 0 else 0.01)
+        df_l['peg_ratio'] = df_l['pl'] / (df_l['crescimento_adj'] * 100)
         
-        # Filtra distorções extremas e ordena do menor PEG Ratio para o maior
-        df_l = df_l[df_l['peg_ratio'] > 0]
+        # Ordena do MENOR PEG Ratio para o MAIOR (filosofia Peter Lynch: PEG < 1.0 é ideal)
         df = df_l.sort_values(by='peg_ratio', ascending=True)
-        
-        # O 'potencial' exibido no front-end será a taxa de crescimento real calculada
         df['potencial'] = df['crescimento']
 
     df = df.reset_index(drop=True)
