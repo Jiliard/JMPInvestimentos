@@ -1,5 +1,5 @@
 /* ==============================================================================
-   DESIGN SYSTEM - JMP INVESTIMENTOS
+   DESIGN SYSTEM - JMP INVESTIMENTOS (FLUIDO E SEM SCROLL HORIZONTAL)
    ============================================================================== */
 :root {
     --bg-dark: #07090E;
@@ -31,20 +31,22 @@
     --shadow-card: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
 }
 
+html, body {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden; /* TRAVA DEFINITIVA DE SCROLL HORIZONTAL NA PÁGINA */
+    margin: 0;
+    padding: 0;
+    background-color: var(--bg-dark);
+    color: var(--text-primary);
+    font-family: var(--font-main);
+    -webkit-font-smoothing: antialiased;
+}
+
 * {
     box-sizing: border-box;
 }
 
-body {
-    background-color: var(--bg-dark);
-    color: var(--text-primary);
-    font-family: var(--font-main);
-    margin: 0;
-    padding: 0;
-    -webkit-font-smoothing: antialiased;
-}
-
-/* ESCONDE O SELETOR DE NÚMERO PADRÃO BRANCO (INPUT NUMBER SPINNERS) */
 input[type=number]::-webkit-inner-spin-button, 
 input[type=number]::-webkit-outer-spin-button { 
     -webkit-appearance: none; 
@@ -69,6 +71,7 @@ input[type=number] {
     position: sticky;
     top: 0;
     z-index: 100;
+    width: 100%;
 }
 
 .brand-container {
@@ -107,7 +110,6 @@ input[type=number] {
     color: var(--accent-green);
 }
 
-/* STATUS DO MERCADO E RELÓGIO */
 .market-status {
     display: flex;
     align-items: center;
@@ -148,22 +150,14 @@ input[type=number] {
     box-shadow: 0 0 8px var(--accent-red-bright);
 }
 
-.status-divider {
-    color: var(--border-color-light);
-}
-
-.clock-display {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    letter-spacing: 0.5px;
-}
+.status-divider { color: var(--border-color-light); }
+.clock-display { font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.5px; }
 
 @keyframes blink {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
 }
 
-/* NAV PILLS */
 .nav-pills {
     display: flex;
     gap: 6px;
@@ -188,15 +182,8 @@ input[type=number] {
     gap: 8px;
 }
 
-.tab-btn svg {
-    width: 16px;
-    height: 16px;
-}
-
-.tab-btn:hover {
-    color: var(--text-primary);
-    background: var(--bg-surface-hover);
-}
+.tab-btn svg { width: 16px; height: 16px; }
+.tab-btn:hover { color: var(--text-primary); background: var(--bg-surface-hover); }
 
 .tab-btn.active {
     color: #07090E;
@@ -206,12 +193,12 @@ input[type=number] {
 }
 
 /* ==============================================================================
-   2. CONTAINERS, FORMULÁRIOS E TOOLTIPS
+   2. CONTAINERS E FORMULÁRIOS FLEXÍVEIS
    ============================================================================== */
 .container {
-    padding: 2rem;
-    max-width: 1650px;
-    margin: 0 auto;
+    padding: 1.5rem;
+    width: 100%;
+    max-width: 100vw;
 }
 
 .aba-content { display: none; }
@@ -219,11 +206,12 @@ input[type=number] {
 
 .top-controls {
     display: flex;
-    gap: 20px;
+    gap: 15px;
     margin-bottom: 20px;
+    flex-wrap: wrap;
 }
 
-.select-strategy { flex-grow: 1; }
+.select-strategy { flex: 1 1 300px; }
 
 .filter-group {
     display: flex;
@@ -232,7 +220,7 @@ input[type=number] {
 }
 
 label {
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     color: var(--text-secondary);
     font-weight: 600;
     display: flex;
@@ -242,7 +230,6 @@ label {
     letter-spacing: 0.5px;
 }
 
-/* TOOLTIPS MODERNAS */
 .tooltip {
     position: relative;
     display: inline-flex;
@@ -253,14 +240,8 @@ label {
     transition: color 0.2s ease;
 }
 
-.tooltip svg {
-    width: 14px;
-    height: 14px;
-}
-
-.tooltip:hover {
-    color: var(--accent-green-bright);
-}
+.tooltip svg { width: 14px; height: 14px; }
+.tooltip:hover { color: var(--accent-green-bright); }
 
 .tooltip::after {
     content: attr(data-tooltip);
@@ -300,11 +281,12 @@ input, select {
     background: var(--bg-surface);
     border: 1px solid var(--border-color);
     color: var(--text-primary);
-    padding: 10px 14px;
+    padding: 10px 12px;
     border-radius: var(--radius-sm);
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     font-family: var(--font-main);
     transition: all 0.2s ease;
+    width: 100%;
 }
 
 input:focus, select:focus {
@@ -317,6 +299,7 @@ input:focus, select:focus {
     position: relative;
     display: flex;
     align-items: center;
+    width: 100%;
 }
 
 .search-icon {
@@ -343,7 +326,7 @@ input:focus, select:focus {
 summary {
     padding: 14px 20px;
     font-weight: 700;
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     cursor: pointer;
     color: var(--text-primary);
     display: flex;
@@ -362,9 +345,9 @@ summary {
 
 .filtros-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 15px;
-    padding: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 12px;
+    padding: 18px;
 }
 
 /* ==============================================================================
@@ -372,23 +355,17 @@ summary {
    ============================================================================== */
 .metrics-container {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 18px;
-    margin-bottom: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
 }
 
 .metric-card {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
-    padding: 18px;
+    padding: 16px;
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-card);
-    transition: transform 0.2s, border-color 0.2s;
-}
-
-.metric-card:hover {
-    transform: translateY(-2px);
-    border-color: var(--border-color-light);
 }
 
 .metric-header {
@@ -399,46 +376,42 @@ summary {
 
 .metric-card span {
     color: var(--text-secondary);
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
 }
 
-.metric-icon {
-    color: var(--accent-green);
-    width: 18px;
-    height: 18px;
-    opacity: 0.8;
-}
+.metric-icon { color: var(--accent-green); width: 18px; height: 18px; opacity: 0.8; }
 
 .metric-card h2 {
     color: var(--text-primary);
-    margin: 10px 0 0 0;
-    font-size: 1.8rem;
+    margin: 8px 0 0 0;
+    font-size: 1.6rem;
     font-family: var(--font-mono);
     font-weight: 700;
 }
 
 /* ==============================================================================
-   4. TABELA FINANCEIRA
+   4. TABELA FINANCEIRA FLUIDA (LAYOUT COMPACTO & SEM SCROLL)
    ============================================================================== */
 .table-wrapper {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    overflow-x: auto;
+    width: 100%;
     box-shadow: var(--shadow-card);
 }
 
 table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.88rem;
+    font-size: 0.82rem;
     text-align: left;
+    table-layout: auto;
 }
 
 th, td {
-    padding: 12px 16px;
+    padding: 10px 8px;
     border-bottom: 1px solid var(--border-color);
     white-space: nowrap;
 }
@@ -447,9 +420,9 @@ th {
     background: var(--bg-surface);
     color: var(--text-secondary);
     font-weight: 700;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
 }
 
 td {
@@ -461,25 +434,24 @@ td {
 td:nth-child(3) {
     font-family: var(--font-main);
     font-weight: 600;
+    white-space: normal; /* Permite quebrar nome longo se a tela for estreita */
 }
 
-tr:hover {
-    background-color: var(--bg-surface-hover);
-}
+tr:hover { background-color: var(--bg-surface-hover); }
 
 .rank-badge {
     background: var(--bg-surface);
     border: 1px solid var(--border-color-light);
     color: var(--accent-green-bright);
-    padding: 2px 8px;
+    padding: 2px 6px;
     border-radius: 4px;
     font-weight: 700;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
 }
 
 .logo-img {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     object-fit: contain;
     border-radius: 50%;
     background: #FFFFFF;
@@ -494,48 +466,107 @@ tr:hover {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-top: 18px;
+    margin-top: 15px;
     background: var(--bg-card);
-    padding: 12px 20px;
+    padding: 12px 18px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     color: var(--text-secondary);
+    flex-wrap: wrap;
+    gap: 10px;
 }
 
 .pag-controls {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
 }
 
 .pag-controls button {
     background: var(--bg-surface);
     border: 1px solid var(--border-color);
     color: var(--text-primary);
-    padding: 6px 14px;
+    padding: 6px 12px;
     border-radius: var(--radius-sm);
     cursor: pointer;
     font-weight: 600;
     display: flex;
     align-items: center;
-    gap: 6px;
-    transition: all 0.2s;
-}
-
-.pag-controls button:hover {
-    background: var(--bg-surface-hover);
-    border-color: var(--accent-green);
+    gap: 4px;
 }
 
 /* ==============================================================================
-   5. FICHA RAIO-X E GRÁFICOS
+   5. MODULO DE DIVIDENDOS E HISTÓRICO PROVENTOS
    ============================================================================== */
+.proventos-section {
+    margin-top: 25px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 20px;
+}
+
+.proventos-section h4 {
+    margin: 0 0 15px 0;
+    color: var(--accent-green-bright);
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 8px;
+}
+
+/* Calendário de Meses de Pagamento */
+.dividend-calendar {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 6px;
+    margin-bottom: 20px;
+}
+
+.month-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 10px 4px;
+    text-align: center;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text-muted);
+}
+
+.month-card.active-pay {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: var(--accent-green);
+    color: var(--accent-green-bright);
+}
+
+/* Tabela de Histórico de Provendos */
+.table-proventos {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+
+.table-proventos th {
+    background: var(--bg-card);
+    padding: 8px 10px;
+}
+
+.table-proventos td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+/* FICHA RAIO-X COMPACTA */
 .raio-x-box {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
-    padding: 28px;
+    padding: 24px;
 }
 
 .raio-x-header {
@@ -543,116 +574,92 @@ tr:hover {
     align-items: center;
     justify-content: space-between;
     border-bottom: 1px solid var(--border-color);
-    padding-bottom: 20px;
-    margin-bottom: 24px;
+    padding-bottom: 18px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 15px;
 }
 
-.raio-x-title {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-}
+.raio-x-title { display: flex; align-items: center; gap: 14px; }
 
 .raio-x-title img {
-    width: 52px;
-    height: 52px;
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
     border: 2px solid var(--accent-green);
     background: white;
     padding: 2px;
 }
 
-.raio-x-title h2 {
-    margin: 0;
-    font-size: 1.6rem;
-    font-weight: 800;
-}
+.raio-x-title h2 { margin: 0; font-size: 1.4rem; font-weight: 800; }
 
 .raio-x-preco h3 {
     margin: 0;
-    font-size: 2.2rem;
+    font-size: 1.8rem;
     font-family: var(--font-mono);
     color: var(--accent-green-bright);
 }
 
 .raio-x-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 20px;
-    margin-bottom: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
 }
 
 .raio-x-section {
     background: var(--bg-surface);
     border: 1px solid var(--border-color);
-    padding: 18px;
+    padding: 15px;
     border-radius: var(--radius-md);
 }
 
 .raio-x-section h4 {
-    margin: 0 0 14px 0;
+    margin: 0 0 12px 0;
     color: var(--accent-green-bright);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
     border-bottom: 1px solid var(--border-color);
-    padding-bottom: 8px;
+    padding-bottom: 6px;
 }
 
 .raio-x-item {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 10px;
-    font-size: 0.88rem;
+    margin-bottom: 8px;
+    font-size: 0.82rem;
 }
 
-.raio-x-val {
-    font-family: var(--font-mono);
-    font-weight: 700;
-}
+.raio-x-val { font-family: var(--font-mono); font-weight: 700; }
 
 .btn-ri, .btn-relatorio {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 20px;
+    gap: 6px;
+    padding: 8px 16px;
     border-radius: var(--radius-sm);
     font-weight: 700;
     text-decoration: none;
-    font-size: 0.85rem;
-    transition: all 0.2s;
+    font-size: 0.8rem;
 }
 
-.btn-ri {
-    background: var(--bg-surface);
-    color: var(--accent-green-bright);
-    border: 1px solid var(--border-color);
-}
+.btn-ri { background: var(--bg-surface); color: var(--accent-green-bright); border: 1px solid var(--border-color); }
+.btn-relatorio { background: var(--accent-green); color: #07090E; border: none; }
 
-.btn-relatorio {
-    background: var(--accent-green);
-    color: #07090E;
-    border: none;
-}
-
-.btn-relatorio:hover {
-    box-shadow: 0 0 15px var(--accent-green-glow);
-}
-
-/* SPINNER & PLACEHOLDERS */
 .spinner-box, .placeholder-box {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 60px 0;
-    gap: 12px;
+    padding: 45px 15px;
+    gap: 10px;
     color: var(--text-muted);
+    text-align: center;
 }
 
 .spinner {
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     border: 3px solid var(--border-color);
     border-top-color: var(--accent-green);
     border-radius: 50%;
