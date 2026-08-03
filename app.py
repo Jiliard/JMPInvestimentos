@@ -37,21 +37,21 @@ def obter_dados_base():
             {"left": "type", "operation": "equal", "right": "stock"}
         ],
         "columns": [
-            "name",                             # 0
-            "description",                      # 1
-            "close",                            # 2
-            "volume",                           # 3
-            "price_earnings_ttm",               # 4
-            "price_book_ratio",                 # 5
-            "dividend_yield_recent",            # 6
-            "return_on_equity",                 # 7
-            "return_on_invested_capital",       # 8
-            "net_margin",                       # 9
-            "enterprise_value_ebitda_ttm",      # 10
-            "earnings_per_share_basic_ttm",     # 11
-            "revenue_growth_5y",                # 12 (Crescimento de Receita 5 Anos em %)
-            "total_shares_outstanding",         # 13 (Ações em circulação)
-            "debt_to_equity"                    # 14 (Dívida / Patrimônio)
+            "name",                                    # 0: Nome
+            "description",                             # 1: Descrição
+            "close",                                   # 2: Preço
+            "volume",                                  # 3: Volume
+            "price_earnings_ttm",                      # 4: P/L
+            "price_book_ratio",                        # 5: P/VP
+            "dividend_yield_recent",                   # 6: DY
+            "return_on_equity",                        # 7: ROE
+            "return_on_invested_capital",              # 8: ROIC
+            "net_margin",                              # 9: Margem
+            "enterprise_value_ebitda_ttm",             # 10: EV/EBITDA
+            "earnings_per_share_basic_ttm",            # 11: LPA
+            "total_revenue_growth_5y",                 # 12: Crescimento Receita 5 Anos (CAGR)
+            "total_equity",                            # 13: Patrimônio Líquido
+            "total_debt"                               # 14: Dívida Total
         ],
         "sort": {"sortBy": "volume", "sortOrder": "desc"},
         "range": [0, 500]
@@ -82,16 +82,12 @@ def obter_dados_base():
                 continue
             
             val = item.get("d", [])
-            if not val or len(val) < 12:
+            if not val or len(val) < 15:
                 continue
                 
             def seguro(indice, padrao=0.0):
-                if indice >= len(val) or val[indice] is None: 
-                    return padrao
-                try:
-                    return float(val[indice])
-                except (ValueError, TypeError):
-                    return padrao
+                if val[indice] is None: return padrao
+                return float(val[indice])
 
             preco = seguro(2)
             if preco <= 0.1: continue 
@@ -109,14 +105,15 @@ def obter_dados_base():
             lpa = seguro(11, preco / pl if pl > 0 else 0.0)
             vpa = preco / pvp if pvp > 0 else 0.0
             
-            # --- CAPTURA CORRETA DO CRESCIMENTO (CAGR 5A) ---
-            # O TradingView entrega o crescimento em porcentagem (ex: 12.5 para 12,5%)
+            # --- INDICADORES REAIS (SEM HARDCODE) ---
+            # O TradingView retorna a porcentagem direta de crescimento de receita nos 5 anos (ex: 15.5 para 15.5%)
             crescimento_bruto = seguro(12, 0.0)
-            crescimento = crescimento_bruto / 100.0 if crescimento_bruto != 0 else 0.0
+            crescimento = crescimento_bruto / 100.0  # Converte para decimal (ex: 0.155)
             
-            total_acoes = seguro(13, 0.0)
-            patrimonio = (preco * total_acoes) / pvp if pvp > 0 else 0.0
-            divida_patrimonio = seguro(14, 0.0)
+            patrimonio = seguro(13, 0.0)
+            divida_total = seguro(14, 0.0)
+            
+            divida_patrimonio = (divida_total / patrimonio) if patrimonio > 0 else 0.0
             liquidez = volume * preco
 
             resultados.append({
@@ -133,7 +130,7 @@ def obter_dados_base():
                 "roe": roe,
                 "margem": margem,
                 "evebit": evebit,
-                "crescimento": crescimento,  # Agora refletindo a porcentagem individual real
+                "crescimento": crescimento,
                 "liquidez": liquidez,
                 "patrimonio": patrimonio,
                 "divida_patrimonio": divida_patrimonio
@@ -145,7 +142,7 @@ def obter_dados_base():
             df = df.fillna(0)
             _CACHE["df"] = df
             _CACHE["updated_at"] = agora
-            print(f"✅ [API] Sucesso! {len(df)} ações da B3 extraídas com indicadores reais.")
+            print(f"✅ [API] Sucesso Máximo! {len(df)} ações da B3 extraídas dinamicamente.")
             return df.copy()
             
     except Exception as e:
@@ -229,14 +226,18 @@ def get_rankings():
 
     # D. PETER LYNCH: GARP (PEG Ratio = (P/L) / Growth_pct) | Menor PEG é melhor (PEG < 1.0)
     elif metodo == "lynch":
+        # Filtra empresas que possuem P/L positivo e Crescimento positivo (> 0)
         df_l = df[(df['pl'] > 0) & (df['crescimento'] > 0)].copy()
-        if df_l.empty: return jsonify([])
         
-        # Converte crescimento decimal para porcentagem inteira (ex: 0.12 -> 12.0)
-        crescimento_pct = df_l['crescimento'] * 100.0
-        df_l['peg_ratio'] = df_l['pl'] / crescimento_pct
+        # O crescimento está em formato decimal (ex: 0.15 para 15%), convertemos para porcentagem inteira (* 100)
+        # PEG Ratio = (P/L) / (Taxa de Crescimento Anual em %)
+        df_l['peg_ratio'] = df_l['pl'] / (df_l['crescimento'] * 100)
         
+        # Filtra distorções extremas e ordena do menor PEG Ratio para o maior
+        df_l = df_l[df_l['peg_ratio'] > 0]
         df = df_l.sort_values(by='peg_ratio', ascending=True)
+        
+        # O 'potencial' exibido no front-end será a taxa de crescimento real calculada
         df['potencial'] = df['crescimento']
 
     df = df.reset_index(drop=True)
