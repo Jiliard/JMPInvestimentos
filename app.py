@@ -221,14 +221,15 @@ def get_rankings():
             return float(padrao)
 
     metodo = request.args.get('metodo', 'graham')
-    liq_min = para_float(request.args.get('liq_min'), 0)
-    pl_max = para_float(request.args.get('pl_max'), 0)
-    pvp_max = para_float(request.args.get('pvp_max'), 0)
+    liq_min = para_float(request.args.get('liq_min'), 1000000)
+    pl_max = para_float(request.args.get('pl_max'), 20)
+    pvp_max = para_float(request.args.get('pvp_max'), 2)
     dy_min = para_float(request.args.get('dy_min'), 0) / 100
-    roe_min = para_float(request.args.get('roe_min'), 0) / 100
-    roic_min = para_float(request.args.get('roic_min'), 0) / 100
-    margem_min = para_float(request.args.get('margem_min'), 0) / 100
+    roe_min = para_float(request.args.get('roe_min'), 10) / 100
+    roic_min = para_float(request.args.get('roic_min'), 10) / 100
+    margem_min = para_float(request.args.get('margem_min'), 5) / 100
     cagr_min = para_float(request.args.get('cagr_min'), 0) / 100
+    divida_max = para_float(request.args.get('divida_max'), 1.5) # Adicionado filtro de alavancagem
 
     mask = (df['liquidez'] >= liq_min)
     if pl_max > 0: mask &= (df['pl'] <= pl_max) & (df['pl'] > 0)
@@ -238,6 +239,7 @@ def get_rankings():
     if roic_min > 0: mask &= (df['roic'] >= roic_min)
     if margem_min > 0: mask &= (df['margem'] >= margem_min)
     if cagr_min > 0: mask &= (df['crescimento'] >= cagr_min)
+    if divida_max > 0: mask &= (df['divida_patrimonio'] <= divida_max) # Aplicação da máscara
 
     df = df[mask].copy()
     df = df.replace([np.inf, -np.inf], np.nan).fillna(0)

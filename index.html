@@ -83,7 +83,6 @@
                 </div>
             </section>
 
-            <!-- FILTROS AVANÇADOS (AGORA COM LIQUIDEZ MÍNIMA INCLUÍDA) -->
             <details class="filtros-expander" open>
                 <summary>
                     <div class="summary-title">
@@ -95,20 +94,20 @@
                     <div class="filter-group">
                         <label>
                             Liquidez Mín. (R$)
-                            <span class="tooltip" data-tooltip="Volume financeiro médio negociado diariamente.">
+                            <span class="tooltip" data-tooltip="Volume financeiro médio diário negociado.">
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
-                        <input type="number" id="liq_min" value="100000" step="100000" onchange="carregarDados()">
+                        <input type="number" id="liq_min" value="1000000" step="100000" onchange="carregarDados()">
                     </div>
                     <div class="filter-group">
                         <label>
                             P/L Máximo
-                            <span class="tooltip" data-tooltip="Preço sobre Lucro. Quantos anos levaria para reaver o capital.">
+                            <span class="tooltip" data-tooltip="Preço sobre Lucro. Anos para reaver o capital.">
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
-                        <input type="number" id="pl_max" value="30" onchange="carregarDados()">
+                        <input type="number" id="pl_max" value="20" onchange="carregarDados()">
                     </div>
                     <div class="filter-group">
                         <label>
@@ -117,12 +116,12 @@
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
-                        <input type="number" id="pvp_max" value="3" onchange="carregarDados()">
+                        <input type="number" id="pvp_max" value="2" onchange="carregarDados()">
                     </div>
                     <div class="filter-group">
                         <label>
                             DY Mínimo (%)
-                            <span class="tooltip" data-tooltip="Dividend Yield dos últimos 12 meses.">
+                            <span class="tooltip" data-tooltip="Dividend Yield nos últimos 12 meses.">
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
@@ -135,7 +134,7 @@
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
-                        <input type="number" id="roe_min" value="0" onchange="carregarDados()">
+                        <input type="number" id="roe_min" value="10" onchange="carregarDados()">
                     </div>
                     <div class="filter-group">
                         <label>
@@ -144,16 +143,16 @@
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
-                        <input type="number" id="roic_min" value="0" onchange="carregarDados()">
+                        <input type="number" id="roic_min" value="10" onchange="carregarDados()">
                     </div>
                     <div class="filter-group">
                         <label>
                             Margem Mín. (%)
-                            <span class="tooltip" data-tooltip="Margem Líquida. Porcentagem de lucro obtida do faturamento.">
+                            <span class="tooltip" data-tooltip="Margem Líquida. Porcentagem de lucro sobre faturamento.">
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
-                        <input type="number" id="margem_min" value="0" onchange="carregarDados()">
+                        <input type="number" id="margem_min" value="5" onchange="carregarDados()">
                     </div>
                     <div class="filter-group">
                         <label>
@@ -163,6 +162,16 @@
                             </span>
                         </label>
                         <input type="number" id="cagr_min" value="0" onchange="carregarDados()">
+                    </div>
+                    <!-- FILTRO ADICIONADO PARA CORRESPONDER AO TCC -->
+                    <div class="filter-group">
+                        <label>
+                            Dívida/Patr. Máx.
+                            <span class="tooltip" data-tooltip="Dívida Total sobre Patrimônio Líquido. Nível de alavancagem.">
+                                <i data-lucide="help-circle"></i>
+                            </span>
+                        </label>
+                        <input type="number" id="divida_max" value="1.5" step="0.1" onchange="carregarDados()">
                     </div>
                 </div>
             </details>

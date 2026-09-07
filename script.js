@@ -162,14 +162,15 @@ async function carregarDados() {
     const tbody = document.querySelector('#tabela-resultados tbody');
     tbody.innerHTML = `<tr><td colspan="13"><div class="spinner-box"><div class="spinner"></div><strong>Consultando base de dados do mercado...</strong></div></td></tr>`;
     
-    const p = param => document.getElementById(param).value;
-    const url = `https://jmpinvestimentos.onrender.com/api/rankings?metodo=${p('metodo')}&liq_min=${p('liq_min')}&pl_max=${p('pl_max')}&pvp_max=${p('pvp_max')}&dy_min=${p('dy_min')}&roe_min=${p('roe_min')}&roic_min=${p('roic_min')}&margem_min=${p('margem_min')}&cagr_min=${p('cagr_min')}`;
+    const p = param => document.getElementById(param) ? document.getElementById(param).value : 0;
+    
+    // INCLUÍDO 'divida_max' NA REQUISIÇÃO
+    const url = `https://jmpinvestimentos.onrender.com/api/rankings?metodo=${p('metodo')}&liq_min=${p('liq_min')}&pl_max=${p('pl_max')}&pvp_max=${p('pvp_max')}&dy_min=${p('dy_min')}&roe_min=${p('roe_min')}&roic_min=${p('roic_min')}&margem_min=${p('margem_min')}&cagr_min=${p('cagr_min')}&divida_max=${p('divida_max')}`;
     
     try {
         const res = await fetch(url);
         dadosGlobais = await res.json();
-        paginaAtual = 1;
-        
+        paginaAtual = 1;        
         document.getElementById('kpi-count').innerText = dadosGlobais.length;
         const pls = dadosGlobais.filter(d => d.pl > 0).map(d => d.pl).sort((a,b) => a-b);
         document.getElementById('kpi-pl').innerText = pls.length ? `${pls[Math.floor(pls.length/2)].toFixed(1)}x` : '-';
