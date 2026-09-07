@@ -1,5 +1,5 @@
 /* ==============================================================================
-   DESIGN SYSTEM - JMP INVESTIMENTOS
+   DESIGN SYSTEM - JMP INVESTIMENTOS (RESPONSIVO E OTIMIZADO)
    ============================================================================== */
 :root {
     --bg-dark: #07090E;
@@ -48,6 +48,11 @@ html, body {
 
 * {
     box-sizing: border-box;
+}
+
+/* FORÇA A TIPOGRAFIA DA PLATAFORMA EM ELEMENTOS DE FORMULÁRIO E BOTÕES */
+button, input, select, textarea {
+    font-family: var(--font-main);
 }
 
 input[type=number]::-webkit-inner-spin-button, 
@@ -183,6 +188,7 @@ input[type=number] {
     display: flex;
     align-items: center;
     gap: 6px;
+    font-family: var(--font-main);
 }
 
 .tab-btn svg { width: 16px; height: 16px; }
@@ -222,7 +228,7 @@ main.container {
 }
 
 /* ==============================================================================
-   3. SELETOR DE ESTRATÉGIAS COMPACTO EM LINHA
+   3. SELETOR DE ESTRATÉGIAS COMPACTO EM LINHA (UNIFICADO COM TIPOGRAFIA CORRETA)
    ============================================================================== */
 .strategy-pills {
     display: grid;
@@ -251,6 +257,7 @@ main.container {
     text-align: center;
     white-space: nowrap;
     height: 38px;
+    font-family: var(--font-main);
 }
 
 /* Divisor vertical sutil entre botões */
@@ -284,6 +291,7 @@ main.container {
 .pill-author {
     font-size: 0.8rem;
     font-weight: 800;
+    font-family: var(--font-main);
 }
 
 .strategy-pill.active .pill-author {
@@ -299,6 +307,7 @@ main.container {
     font-size: 0.75rem;
     font-weight: 600;
     opacity: 0.85;
+    font-family: var(--font-main);
 }
 
 .strategy-pill.active .pill-strategy {
