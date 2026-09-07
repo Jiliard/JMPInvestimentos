@@ -1,10 +1,11 @@
-from flask import Flask, jsonify, request
-from flask_cors import CORS
-import pandas as pd
-import numpy as np
-import requests
+import os
 import warnings
 import time
+import requests
+import pandas as pd
+import numpy as np
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 
 # Módulo de persistência de banco de dados
 import database
@@ -14,49 +15,36 @@ warnings.filterwarnings("ignore")
 app = Flask(__name__)
 CORS(app)
 
-# Inicializa a estrutura do banco ao ligar o servidor
+# Inicializa as tabelas no Supabase (historico_acoes e acoes_cache) ao ligar o servidor
 database.inicializar_banco()
 
-_CACHE = {"df": None, "updated_at": 0}
-CACHE_TTL = 1800 # 30 minutos em memória
+# Chave de segurança para disparar a atualização em segundo plano (Cron Job)
+CRON_SECRET_KEY = os.getenv("CRON_SECRET_KEY", "jmp_secret_cron_2026")
 
-def obter_dados_base():
-    global _CACHE
-    agora = time.time()
-    
-    if _CACHE["df"] is not None and (agora - _CACHE["updated_at"]) < CACHE_TTL:
-        return _CACHE["df"].copy()
-        
-    print("⏳ [API] Varrendo a B3 inteira via TradingView Scanner...")
-    
+# Cache em Memória RAM para resposta instantânea (< 10ms) sem sobrecarregar o Supabase
+_CACHE_MEMORIA = {"df": None, "updated_at": 0}
+CACHE_RAM_TTL = 300  # 5 minutos em memória RAM
+
+# -----------------------------------------------------------------------------
+# 1. FUNÇÃO DE EXTRAÇÃO E CÁLCULO NATIVO (TradingView -> DataFrame)
+# -----------------------------------------------------------------------------
+def buscar_e_calcular_dados_tradingview():
+    """Varre a B3 via TradingView Scanner e processa os múltiplos nativos."""
+    print("⏳ [API TRADINGVIEW] Executando varredura e cálculos dos ativos da B3...")
     url_tv = "https://scanner.tradingview.com/brazil/scan"
     
-    # MAPEAMENTO OFICIAL DE COLUNAS DO TRADINGVIEW
     cols = [
-        "name",                                    # Ticker
-        "description",                             # Nome da Empresa
-        "close",                                   # Preço da Cotação
-        "volume",                                  # Volume Negociado
-        "price_earnings_ttm",                      # P/L Pronto (TV)
-        "price_book_ratio",                        # P/VP Pronto (TV)
-        "dividend_yield_recent",                   # DY recente % (TV)
-        "return_on_equity",                        # ROE % (TV)
-        "return_on_invested_capital",              # ROIC % (TV)
-        "net_margin",                              # Margem Líquida % (TV)
-        "enterprise_value_ebitda_ttm",             # EV/EBITDA (TV)
-        "earnings_per_share_basic_ttm",            # LPA (TV)
-        "dps_common_stock_prim_issue_fy",          # Dividendo por Ação Real (DPA 12M)
-        "total_revenue_growth_5y",                 # Crescimento Receita 5 Anos (CAGR)
-        "earnings_per_share_diluted_growth_ttm_yoy", # Crescimento Lucro YoY
-        "total_equity",                            # Patrimônio Líquido Total
-        "total_debt"                               # Dívida Total
+        "name", "description", "close", "volume", "price_earnings_ttm",
+        "price_book_ratio", "dividend_yield_recent", "return_on_equity",
+        "return_on_invested_capital", "net_margin", "enterprise_value_ebitda_ttm",
+        "earnings_per_share_basic_ttm", "dps_common_stock_prim_issue_fy",
+        "total_revenue_growth_5y", "earnings_per_share_diluted_growth_ttm_yoy",
+        "total_equity", "total_debt"
     ]
     
     payload = {
         "markets": ["brazil"],
-        "filter": [
-            {"left": "type", "operation": "equal", "right": "stock"}
-        ],
+        "filter": [{"left": "type", "operation": "equal", "right": "stock"}],
         "columns": cols,
         "sort": {"sortBy": "volume", "sortOrder": "desc"},
         "range": [0, 500]
@@ -70,11 +58,9 @@ def obter_dados_base():
     resultados = []
     
     try:
-        r = requests.post(url_tv, json=payload, headers=headers, timeout=20)
-        
+        r = requests.post(url_tv, json=payload, headers=headers, timeout=25)
         if r.status_code != 200:
             print(f"🚨 [ERRO TV] Status {r.status_code}: {r.text}")
-            if _CACHE["df"] is not None: return _CACHE["df"].copy()
             return pd.DataFrame()
             
         dados = r.json()
@@ -91,7 +77,6 @@ def obter_dados_base():
             if not val or len(val) < len(cols):
                 continue
             
-            # MONTA UM DICIONÁRIO DINÂMICO PARA NUNCA LER A COLUNA ERRADA
             row_data = dict(zip(cols, val))
             
             def get_val(key, padrao=0.0):
@@ -110,7 +95,7 @@ def obter_dados_base():
             
             pl = get_val("price_earnings_ttm")
             pvp = get_val("price_book_ratio")
-            dy = get_val("dividend_yield_recent") / 100.0  # Converte de % para decimal
+            dy = get_val("dividend_yield_recent") / 100.0
             roe = get_val("return_on_equity") / 100.0
             roic = get_val("return_on_invested_capital") / 100.0
             margem = get_val("net_margin") / 100.0
@@ -118,18 +103,18 @@ def obter_dados_base():
             lpa = get_val("earnings_per_share_basic_ttm")
             dpa_12m = get_val("dps_common_stock_prim_issue_fy")
             
-            # Se o DPA vier zerado do TradingView, reconstrói o DPA via (Preço * DY)
+            # Reconstrução de Fallback para DPA e DY
             if dpa_12m <= 0 and dy > 0:
                 dpa_12m = preco * dy
             elif dpa_12m > 0 and dy <= 0:
                 dy = dpa_12m / preco
                 
-            # Cálculo exato do VPA: Preço / P/VP
-            vpa = (preco / pvp) if pvp > 0 else (preco / 1.0)
+            # Cálculo de VPA e LPA
+            vpa = (preco / pvp) if pvp > 0 else preco
             if lpa <= 0 and pl > 0:
                 lpa = preco / pl
             
-            # Crescimento CAGR (Receita 5 Anos ou Fallback YoY do Lucro)
+            # Crescimento CAGR / YoY
             crescimento_5y = get_val("total_revenue_growth_5y")
             crescimento_yoy = get_val("earnings_per_share_diluted_growth_ttm_yoy")
             
@@ -141,7 +126,6 @@ def obter_dados_base():
                 crescimento_bruto = (roe * 100.0 * 0.5) if roe > 0 else 5.0
                 
             crescimento = crescimento_bruto / 100.0
-            
             patrimonio = get_val("total_equity")
             divida_total = get_val("total_debt")
             liquidez = volume * preco
@@ -150,7 +134,6 @@ def obter_dados_base():
             resultados.append({
                 "ticker": ticker,
                 "nome": nome_empresa,
-                "logo": f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{ticker[:4]}.png",
                 "preco": preco,
                 "pl": pl,
                 "pvp": pvp,
@@ -165,24 +148,58 @@ def obter_dados_base():
                 "crescimento": crescimento,
                 "liquidez": liquidez,
                 "patrimonio": patrimonio,
+                "divida_total": divida_total,
                 "divida_patrimonio": divida_patrimonio
             })
             
         df = pd.DataFrame(resultados)
-        
         if not df.empty:
             df = df.fillna(0)
-            _CACHE["df"] = df
-            _CACHE["updated_at"] = agora
-            print(f"✅ [API] {len(df)} ações da B3 mapeadas e calculadas com sucesso.")
-            return df.copy()
+            return df
             
     except Exception as e:
-        print(f"🚨 [ERRO CRÍTICO] Falha no processamento: {e}")
-        if _CACHE["df"] is not None: return _CACHE["df"].copy()
+        print(f"🚨 [ERRO CRÍTICO FETCH TV]: {e}")
         
     return pd.DataFrame()
 
+# -----------------------------------------------------------------------------
+# 2. CAMADA DE ACESSO COM CACHE HÍBRIDO (RAM + SUPABASE)
+# -----------------------------------------------------------------------------
+def obter_dados_base():
+    """Lê as ações da RAM (se disponível em < 5min) ou direto da tabela acoes_cache do Supabase."""
+    global _CACHE_MEMORIA
+    agora = time.time()
+
+    # 1. Tenta servir direto da Memória RAM (Carga ultrarrápida < 10ms)
+    if _CACHE_MEMORIA["df"] is not None and (agora - _CACHE_MEMORIA["updated_at"]) < CACHE_RAM_TTL:
+        return _CACHE_MEMORIA["df"].copy()
+
+    # 2. Se a RAM expirou, consulta o Supabase
+    registros = database.ler_cache_acoes()
+    
+    if registros:
+        df = pd.DataFrame(registros)
+        df['logo'] = df['ticker'].apply(lambda t: f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{t[:4]}.png")
+        if 'divida_patrimonio' not in df.columns:
+            df['divida_patrimonio'] = np.where(df['patrimonio'] > 0, df['divida_total'] / df['patrimonio'], 0.0)
+            
+        # Atualiza a RAM
+        _CACHE_MEMORIA["df"] = df
+        _CACHE_MEMORIA["updated_at"] = agora
+        return df.copy()
+
+    # 3. Se o banco estiver vazio (primeira execução), faz o fetch do TradingView e inicializa o Supabase
+    print("⚠️ [CACHE VAZIO] Inicializando carga primária no Supabase...")
+    df_novo = buscar_e_calcular_dados_tradingview()
+    if not df_novo.empty:
+        database.salvar_cache_acoes(df_novo)
+        return obter_dados_base()
+        
+    return pd.DataFrame()
+
+# -----------------------------------------------------------------------------
+# 3. ROTAS DA API
+# -----------------------------------------------------------------------------
 @app.route('/api/tickers', methods=['GET'])
 def get_tickers():
     df = obter_dados_base()
@@ -227,11 +244,10 @@ def get_rankings():
 
     if df.empty: return jsonify([])
 
-    # METODOLOGIAS
+    # APLICAÇÃO DAS METODOLOGIAS DE VALUATION
     if metodo == "graham":
         df = df[(df['lpa'] > 0) & (df['vpa'] > 0)].copy()
         if df.empty: return jsonify([])
-        
         df['valor_justo'] = np.sqrt(22.5 * df['lpa'] * df['vpa'])
         df['potencial'] = (df['valor_justo'] - df['preco']) / df['preco']
         df = df.sort_values(by='potencial', ascending=False)
@@ -239,7 +255,6 @@ def get_rankings():
     elif metodo == "bazin":
         df = df[df['dy'] > 0].copy()
         if df.empty: return jsonify([])
-        
         df['preco_teto'] = df['dpa_12m'] / 0.06
         df['potencial'] = (df['preco_teto'] - df['preco']) / df['preco']
         df = df.sort_values(by='potencial', ascending=False)
@@ -247,10 +262,8 @@ def get_rankings():
     elif metodo == "greenblatt":
         df_m = df[(df['evebit'] > 0) & (df['roic'] > 0)].copy()
         if df_m.empty: return jsonify([])
-        
         rank_roic = df_m['roic'].rank(ascending=False, method='min')
         rank_evebit = df_m['evebit'].rank(ascending=True, method='min')
-        
         df_m['score'] = rank_roic + rank_evebit
         df = df_m.sort_values(by='score', ascending=True)
         df['potencial'] = df['score']
@@ -258,20 +271,13 @@ def get_rankings():
     elif metodo == "lynch":
         df_l = df[df['pl'] > 0].copy()
         if df_l.empty: return jsonify([])
-        
         df_l['crescimento_pct'] = df_l['crescimento'] * 100.0
         df_l['peg_ratio'] = df_l['pl'] / df_l['crescimento_pct'].replace(0, 1.0)
-        
         df = df_l.sort_values(by='peg_ratio', ascending=True)
         df['potencial'] = df['crescimento']
 
     df = df.reset_index(drop=True)
     df['rank'] = df.index + 1
-
-    try:
-        database.salvar_historico_ranking(df, metodo)
-    except Exception as e:
-        print(f"🚨 [ERRO BANCO]: {e}")
 
     return jsonify(df.to_dict(orient='records'))
 
@@ -309,10 +315,7 @@ def get_analise_completa():
 
     p_map = {"30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"}
     range_api = p_map.get(periodo_solicitado, "1y")
-    
-    intervalo_api = "1d"
-    if range_api in ["5y", "10y"]:
-        intervalo_api = "1wk"
+    intervalo_api = "1wk" if range_api in ["5y", "10y"] else "1d"
 
     chart_data = None
 
@@ -344,7 +347,6 @@ def get_analise_completa():
                 df_chart = df_chart.ffill().bfill()
                 
                 series_close = df_chart['close']
-                
                 delta = series_close.diff()
                 gain = delta.where(delta > 0, 0).rolling(window=min(14, len(series_close))).mean()
                 loss = -delta.where(delta < 0, 0).rolling(window=min(14, len(series_close))).mean()
@@ -378,6 +380,37 @@ def get_analise_completa():
         "fundamentos": fundamentos_dict,
         "chart_data": chart_data
     })
+
+# -----------------------------------------------------------------------------
+# 4. ROTA DE ATUALIZAÇÃO EM SEGUNDO PLANO (CRON JOB)
+# -----------------------------------------------------------------------------
+@app.route('/api/cron/update', methods=['GET', 'POST'])
+def executar_cron_update():
+    """Rota invocada periodicamente via GitHub Actions para atualizar a nuvem sem travar o usuário."""
+    global _CACHE_MEMORIA
+    chave_requisicao = request.args.get('key') or request.headers.get('X-Cron-Key')
+    
+    if chave_requisicao != CRON_SECRET_KEY:
+        return jsonify({"error": "Acesso não autorizado."}), 403
+
+    df_novo = buscar_e_calcular_dados_tradingview()
+    if not df_novo.empty:
+        # 1. Atualiza o cache de leitura instantânea
+        database.salvar_cache_acoes(df_novo)
+        
+        # 2. Reseta o cache de memória RAM para a API carregar os dados novos imediatamente
+        _CACHE_MEMORIA["df"] = None
+        _CACHE_MEMORIA["updated_at"] = 0
+        
+        # 3. Salva o histórico para relatórios do projeto
+        try:
+            database.salvar_historico_ranking(df_novo, "cron_update_geral")
+        except Exception as e:
+            print(f"🚨 [ERRO HISTÓRICO CRON]: {e}")
+
+        return jsonify({"status": "sucesso", "total_acoes": len(df_novo), "mensagem": "Cache e Histórico Supabase atualizados com sucesso!"})
+        
+    return jsonify({"status": "erro", "mensagem": "Falha ao obter dados do TradingView."}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

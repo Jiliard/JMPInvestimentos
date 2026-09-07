@@ -1,0 +1,27 @@
+name: Atualizar Indicadores B3
+
+on:
+  schedule:
+    # Executa a cada 30 minutos de segunda a sexta durante o horário do pregão (13h às 22h UTC)
+    - cron: '*/30 13-22 * * 1-5'
+  workflow_dispatch: # Permite disparar manualmente pelo painel do GitHub
+
+jobs:
+  update-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Instalar Dependências
+        run: pip install -r requirements.txt
+
+      - name: Executar Atualização
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python cron_updater.py

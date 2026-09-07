@@ -5,12 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JMP Investimentos</title>
 
-    <!-- Fontes Financeiras Profissionais -->
+    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/B3SA.png">
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     
-    <!-- Ícones Lucide -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     
@@ -48,35 +48,42 @@
         <!-- ABA 1: SCREENER DE AÇÕES -->
         <div id="aba-screener" class="aba-content active">
             
+            <!-- SELETOR COMPACTO DE ESTRATÉGIAS EM LINHA -->
             <section class="top-controls">
                 <div class="filter-group select-strategy">
                     <label>
                         Estratégia de Ranking
-                        <span class="tooltip" id="tooltip-metodo" data-tooltip="Benjamin Graham: Calcula o valor intrínseco baseado no patrimônio e lucro da empresa.">
+                        <span class="tooltip" id="tooltip-metodo" data-tooltip="Benjamin Graham: Calculates intrinsic value based on equity and earnings.">
                             <i data-lucide="help-circle"></i>
                         </span>
                     </label>
-                    <div class="select-wrapper">
-                        <select id="metodo" onchange="atualizarTooltipMetodo(); carregarDados();">
-                            <option value="graham">Método Graham (Valor Intrínseco)</option>
-                            <option value="bazin">Método Bazin (Preço Teto Dividendos)</option>
-                            <option value="greenblatt">Método Greenblatt (Magic Formula)</option>
-                            <option value="lynch">Método Peter Lynch (Crescimento GARP)</option>
-                        </select>
+                    <div class="strategy-pills">
+                        <button class="strategy-pill active" data-metodo="graham" onclick="selecionarEstrategia('graham')">
+                            <span class="pill-author">Benjamin Graham</span>
+                            <span class="pill-dot">•</span>
+                            <span class="pill-strategy">Valor Intrínseco</span>
+                        </button>
+                        <button class="strategy-pill" data-metodo="bazin" onclick="selecionarEstrategia('bazin')">
+                            <span class="pill-author">Décio Bazin</span>
+                            <span class="pill-dot">•</span>
+                            <span class="pill-strategy">Preço Teto Dividendos</span>
+                        </button>
+                        <button class="strategy-pill" data-metodo="greenblatt" onclick="selecionarEstrategia('greenblatt')">
+                            <span class="pill-author">Joel Greenblatt</span>
+                            <span class="pill-dot">•</span>
+                            <span class="pill-strategy">Magic Formula</span>
+                        </button>
+                        <button class="strategy-pill" data-metodo="lynch" onclick="selecionarEstrategia('lynch')">
+                            <span class="pill-author">Peter Lynch</span>
+                            <span class="pill-dot">•</span>
+                            <span class="pill-strategy">Crescimento GARP</span>
+                        </button>
                     </div>
-                </div>
-
-                <div class="filter-group">
-                    <label>
-                        Liquidez Mínima (R$)
-                        <span class="tooltip" data-tooltip="Volume financeiro médio negociado diariamente para evitar ações sem liquidez.">
-                            <i data-lucide="help-circle"></i>
-                        </span>
-                    </label>
-                    <input type="number" id="liq_min" value="100000" step="100000" onchange="carregarDados()">
+                    <input type="hidden" id="metodo" value="graham">
                 </div>
             </section>
 
+            <!-- FILTROS AVANÇADOS (AGORA COM LIQUIDEZ MÍNIMA INCLUÍDA) -->
             <details class="filtros-expander" open>
                 <summary>
                     <div class="summary-title">
@@ -87,8 +94,17 @@
                 <div class="filtros-grid">
                     <div class="filter-group">
                         <label>
+                            Liquidez Mín. (R$)
+                            <span class="tooltip" data-tooltip="Volume financeiro médio negociado diariamente.">
+                                <i data-lucide="help-circle"></i>
+                            </span>
+                        </label>
+                        <input type="number" id="liq_min" value="100000" step="100000" onchange="carregarDados()">
+                    </div>
+                    <div class="filter-group">
+                        <label>
                             P/L Máximo
-                            <span class="tooltip" data-tooltip="Preço sobre Lucro. Quantos anos levaria para reaver o capital através dos lucros.">
+                            <span class="tooltip" data-tooltip="Preço sobre Lucro. Quantos anos levaria para reaver o capital.">
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
@@ -97,7 +113,7 @@
                     <div class="filter-group">
                         <label>
                             P/VP Máximo
-                            <span class="tooltip" data-tooltip="Preço sobre Valor Patrimonial. Relação entre preço da ação e patrimônio líquido.">
+                            <span class="tooltip" data-tooltip="Preço sobre Valor Patrimonial.">
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
@@ -106,7 +122,7 @@
                     <div class="filter-group">
                         <label>
                             DY Mínimo (%)
-                            <span class="tooltip" data-tooltip="Dividend Yield. Rendimento percentual de dividendos nos últimos 12 meses.">
+                            <span class="tooltip" data-tooltip="Dividend Yield dos últimos 12 meses.">
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
@@ -115,7 +131,7 @@
                     <div class="filter-group">
                         <label>
                             ROE Mínimo (%)
-                            <span class="tooltip" data-tooltip="Retorno sobre Patrimônio Líquido. Capacidade de gerar lucro com capital próprio.">
+                            <span class="tooltip" data-tooltip="Retorno sobre Patrimônio Líquido.">
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
@@ -124,7 +140,7 @@
                     <div class="filter-group">
                         <label>
                             ROIC Mínimo (%)
-                            <span class="tooltip" data-tooltip="Retorno sobre Capital Investido. Eficiência operacional considerando dívidas e capital próprio.">
+                            <span class="tooltip" data-tooltip="Retorno sobre Capital Investido.">
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
@@ -132,8 +148,8 @@
                     </div>
                     <div class="filter-group">
                         <label>
-                            Margem Mínima (%)
-                            <span class="tooltip" data-tooltip="Margem Líquida. Porcentagem de lucro obtido sobre cada real faturado.">
+                            Margem Mín. (%)
+                            <span class="tooltip" data-tooltip="Margem Líquida. Porcentagem de lucro obtida do faturamento.">
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
@@ -141,8 +157,8 @@
                     </div>
                     <div class="filter-group">
                         <label>
-                            Cresc. 5a Mínimo (%)
-                            <span class="tooltip" data-tooltip="CAGR. Taxa composta anual de crescimento da receita nos últimos 5 anos.">
+                            Cresc. 5a Mín. (%)
+                            <span class="tooltip" data-tooltip="Taxa composta anual de crescimento da receita em 5 anos.">
                                 <i data-lucide="help-circle"></i>
                             </span>
                         </label>
@@ -222,40 +238,75 @@
                     <label>Buscar Ativo da B3</label>
                     <div class="search-input-wrapper">
                         <i data-lucide="search" class="search-icon"></i>
-                        <input type="text" id="input-ticker" list="lista-tickers" placeholder="Digite o Ticker (ex: WEGE3, PETR4)..." onchange="carregarAnalise()">
+                        <input type="text" id="input-ticker" list="lista-tickers" placeholder="Digite o código da empresa (ex: WEGE3, PETR4, VALE3)..." onchange="carregarAnalise()">
                     </div>
                     <datalist id="lista-tickers"></datalist>
                 </div>
             </section>
 
             <div id="analise-wrapper">
-                <div id="ficha-container" style="margin-bottom: 30px;">
+                <div id="ficha-container">
                     <div class="placeholder-box">
-                        <i data-lucide="search-code" style="width: 48px; height: 48px; color: #4B5563;"></i>
-                        <h3>Nenhum ativo selecionado</h3>
-                        <p>Busque um ticker no campo acima para carregar o Raio-X fundamentalista, histórico de proventos e o gráfico técnico.</p>
+                        <i data-lucide="search-code" style="width: 52px; height: 52px; color: var(--accent-green);"></i>
+                        <h3>Consulta de Ativos</h3>
+                        <p>Digite um ticker para carregar os indicadores fundamentalistas, os proventos acumulados e o histórico técnico.</p>
                     </div>
                 </div>
 
                 <div id="chart-section" class="raio-x-box" style="padding: 25px 30px; display: none;">
                     <div class="chart-controls">
-                        <h4><i data-lucide="candlestick-chart"></i> Histórico de Cotações & Indicadores Técnicos</h4>
-                        <div class="filter-group" style="flex-direction: row; align-items: center; gap: 10px;">
-                            <label style="margin: 0;">Período:</label>
-                            <select id="select-periodo" onchange="carregarAnalise()">
-                                <option value="30 Dias">30 Dias</option>
-                                <option value="6 Meses">6 Meses</option>
-                                <option value="1 Ano" selected>1 Ano</option>
-                                <option value="5 Anos">5 Anos</option>
-                                <option value="10 Anos">10 Anos</option>
-                            </select>
+                        <h4><i data-lucide="candlestick-chart"></i> Histórico de Preços e Indicadores Técnicos</h4>
+                        
+                        <div class="periodo-selector">
+                            <span class="periodo-label">Período:</span>
+                            <div class="periodo-pills">
+                                <button class="periodo-pill" data-periodo="30 Dias" onclick="selecionarPeriodo('30 Dias')">30D</button>
+                                <button class="periodo-pill" data-periodo="6 Meses" onclick="selecionarPeriodo('6 Meses')">6M</button>
+                                <button class="periodo-pill active" data-periodo="1 Ano" onclick="selecionarPeriodo('1 Ano')">1A</button>
+                                <button class="periodo-pill" data-periodo="5 Anos" onclick="selecionarPeriodo('5 Anos')">5A</button>
+                                <button class="periodo-pill" data-periodo="10 Anos" onclick="selecionarPeriodo('10 Anos')">10A</button>
+                            </div>
+                            <input type="hidden" id="select-periodo" value="1 Ano">
                         </div>
                     </div>
+                    
                     <div id="chart-container"></div>
+
+                    <details class="guia-grafico-expander">
+                        <summary>
+                            <span><i data-lucide="book-open"></i> Como Interpretar este Gráfico</span>
+                            <i data-lucide="chevron-down" class="chevron"></i>
+                        </summary>
+                        <div class="guia-grafico-grid">
+                            <div class="guia-item">
+                                <h5><i data-lucide="candlestick-chart"></i> Cotação (Candlesticks)</h5>
+                                <p>Representa a variação de preço do ativo. Barras <strong style="color: #10B981;">verdes</strong> indicam alta no dia e barras <strong style="color: #F43F5E;">vermelhas</strong> indicam queda.</p>
+                            </div>
+                            <div class="guia-item">
+                                <h5><i data-lucide="trending-up"></i> Médias Móveis</h5>
+                                <p>A linha <strong style="color: #F59E0B;">Laranja (50 dias)</strong> indica a tendência de curto prazo. A linha <strong style="color: #3B82F6;">Azul (200 dias)</strong> sinaliza a tendência principal de longo prazo.</p>
+                            </div>
+                            <div class="guia-item">
+                                <h5><i data-lucide="activity"></i> Índice de Força Relativa (IFR)</h5>
+                                <p>Mede a intensidade das negociações em uma escala de 0 a 100:</p>
+                                <ul>
+                                    <li><strong style="color: #F43F5E;">Acima de 70:</strong> Ativo valorizado, podendo indicar momento de sobrecompra.</li>
+                                    <li><strong style="color: #10B981;">Abaixo de 30:</strong> Ativo descontado, podendo indicar momento de sobrevenda.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </details>
                 </div>
             </div>
         </div>
     </main>
+
+    <footer class="app-footer">
+        <div class="footer-container">
+            <p style="margin: 0 0 10px 0;">Esta plataforma possui caráter exclusivamente informativo e analítico, baseando-se em algoritmos e modelos quantitativos públicos. As informações apresentadas não constituem relatório de análise, consultoria ou recomendação de compra e venda de valores mobiliários (Resolução CVM nº 20/2021). Investimentos no mercado de renda variável envolvem riscos de perda patrimonial.</p>
+            <p style="margin: 0; color: #64748B;">© 2026 JMP Investimentos. Todos os direitos reservados.</p>
+        </div>
+    </footer>
 
     <script src="script.js"></script>
     <script>

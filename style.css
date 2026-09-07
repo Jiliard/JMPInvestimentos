@@ -1,5 +1,5 @@
 /* ==============================================================================
-   DESIGN SYSTEM - JMP INVESTIMENTOS (RESPONSIVO PARA MOBILE)
+   DESIGN SYSTEM - JMP INVESTIMENTOS
    ============================================================================== */
 :root {
     --bg-dark: #07090E;
@@ -41,6 +41,9 @@ html, body {
     color: var(--text-primary);
     font-family: var(--font-main);
     -webkit-font-smoothing: antialiased;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
 }
 
 * {
@@ -193,9 +196,11 @@ input[type=number] {
 }
 
 /* ==============================================================================
-   2. CONTAINERS E FORMULÁRIOS
+   2. CONTAINERS E CONTROLES PRINCIPAIS
    ============================================================================== */
-.container {
+main.container {
+    flex: 1 0 auto;
+    min-height: calc(100vh - 160px);
     padding: 1.2rem;
     width: 100%;
     max-width: 100vw;
@@ -211,8 +216,99 @@ input[type=number] {
     flex-wrap: wrap;
 }
 
-.select-strategy { flex: 1 1 280px; }
+.select-strategy {
+    flex: 1 1 100%;
+    width: 100%;
+}
 
+/* ==============================================================================
+   3. SELETOR DE ESTRATÉGIAS COMPACTO EM LINHA
+   ============================================================================== */
+.strategy-pills {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    background: var(--bg-surface);
+    padding: 3px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    width: 100%;
+}
+
+.strategy-pill {
+    position: relative;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    text-align: center;
+    white-space: nowrap;
+    height: 38px;
+}
+
+/* Divisor vertical sutil entre botões */
+.strategy-pill:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 20%;
+    height: 60%;
+    width: 1px;
+    background-color: var(--border-color-light);
+    transition: opacity 0.2s ease;
+}
+
+.strategy-pill:hover {
+    color: var(--text-primary);
+    background: var(--bg-surface-hover);
+}
+
+.strategy-pill.active {
+    background: var(--accent-green);
+    color: #07090E;
+    box-shadow: 0 0 10px var(--accent-green-glow);
+}
+
+.strategy-pill.active::after,
+.strategy-pill:has(+ .strategy-pill.active)::after {
+    opacity: 0;
+}
+
+.pill-author {
+    font-size: 0.8rem;
+    font-weight: 800;
+}
+
+.strategy-pill.active .pill-author {
+    color: #07090E;
+}
+
+.pill-dot {
+    font-size: 0.7rem;
+    opacity: 0.5;
+}
+
+.pill-strategy {
+    font-size: 0.75rem;
+    font-weight: 600;
+    opacity: 0.85;
+}
+
+.strategy-pill.active .pill-strategy {
+    color: #0F172A;
+    opacity: 0.95;
+}
+
+/* ==============================================================================
+   4. FILTROS, INPUTS E TOOLTIPS
+   ============================================================================== */
 .filter-group {
     display: flex;
     flex-direction: column;
@@ -342,6 +438,7 @@ summary {
     color: var(--accent-green-bright);
 }
 
+/* GRADE DE 8 COLUNAS PARA OS FILTROS FUNDAMENTALISTAS */
 .filtros-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -350,7 +447,7 @@ summary {
 }
 
 /* ==============================================================================
-   3. CARDS DE KPIS
+   5. CARDS DE KPIS
    ============================================================================== */
 .metrics-container {
     display: grid;
@@ -391,14 +488,14 @@ summary {
 }
 
 /* ==============================================================================
-   4. TABELA FINANCEIRA
+   6. TABELA FINANCEIRA
    ============================================================================== */
 .table-wrapper {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     width: 100%;
-    overflow-x: auto; /* ROLAGEM SÓ NA TABELA QUANDO NECESSÁRIO NO MOBILE */
+    overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     box-shadow: var(--shadow-card);
 }
@@ -408,7 +505,7 @@ table {
     border-collapse: collapse;
     font-size: 0.82rem;
     text-align: left;
-    min-width: 750px; /* GARANTE QUE A TABELA NÃO FIQUE ESMAGADA EM TELAS PEQUENAS */
+    min-width: 750px;
 }
 
 th, td {
@@ -497,67 +594,17 @@ tr:hover { background-color: var(--bg-surface-hover); }
 }
 
 /* ==============================================================================
-   5. MÓDULO DE DIVIDENDOS E RAIO-X
+   7. MÓDULO DE ANÁLISE DETALHADA E RAIO-X
    ============================================================================== */
-.proventos-section {
-    margin-top: 20px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-    padding: 16px;
+.chart-header {
+    margin-bottom: 25px;
 }
 
-.proventos-section h4 {
-    margin: 0 0 12px 0;
-    color: var(--accent-green-bright);
-    font-size: 0.88rem;
-    text-transform: uppercase;
+#analise-wrapper {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: 6px;
+    flex-direction: column;
+    gap: 25px;
 }
-
-/* CALENDÁRIO DE DIVIDENDOS FLUIDO */
-.dividend-calendar {
-    display: grid;
-    grid-template-columns: repeat(6, 1fr); /* 2 LINHAS DE 6 MESES NO MOBILE */
-    gap: 6px;
-    margin-bottom: 16px;
-}
-
-.month-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    padding: 8px 2px;
-    text-align: center;
-    font-size: 0.7rem;
-    font-weight: 700;
-    color: var(--text-muted);
-}
-
-.month-card.active-pay {
-    background: rgba(16, 185, 129, 0.12);
-    border-color: var(--accent-green);
-    color: var(--accent-green-bright);
-}
-
-.proventos-table-wrapper {
-    overflow-x: auto;
-    width: 100%;
-}
-
-.table-proventos {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.78rem;
-    min-width: 480px;
-}
-
-.table-proventos th { background: var(--bg-card); padding: 8px; }
-.table-proventos td { padding: 8px; border-bottom: 1px solid var(--border-color); }
 
 .raio-x-box {
     background: var(--bg-card);
@@ -629,6 +676,26 @@ tr:hover { background-color: var(--bg-surface-hover); }
 
 .raio-x-val { font-family: var(--font-mono); font-weight: 700; }
 
+.proventos-section {
+    margin-top: 20px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 16px;
+}
+
+.proventos-section h4 {
+    margin: 0 0 12px 0;
+    color: var(--accent-green-bright);
+    font-size: 0.88rem;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 6px;
+}
+
 .btn-ri, .btn-relatorio {
     display: inline-flex;
     align-items: center;
@@ -668,8 +735,171 @@ tr:hover { background-color: var(--bg-surface-hover); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ==============================================================================
-   6. MEDIA QUERIES (ADAPTAÇÃO RESPONSIVA PARA SMARTPHONES)
+   8. SELETOR DE PERÍODO & PAINEL EDUCATIVO
    ============================================================================== */
+.chart-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.chart-controls h4 {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-primary);
+}
+
+.periodo-selector {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.periodo-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.periodo-pills {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-dark);
+    padding: 3px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+}
+
+.periodo-pill {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.periodo-pill:hover {
+    color: var(--text-primary);
+    background: var(--bg-surface-hover);
+}
+
+.periodo-pill.active {
+    background: var(--accent-green);
+    color: #07090E;
+    box-shadow: 0 0 10px var(--accent-green-glow);
+}
+
+.guia-grafico-expander {
+    margin-top: 20px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.guia-grafico-expander summary {
+    padding: 12px 16px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-card);
+    user-select: none;
+}
+
+.guia-grafico-expander summary span {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--accent-green-bright);
+}
+
+.guia-grafico-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 15px;
+    padding: 16px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.guia-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+}
+
+.guia-item h5 {
+    margin: 0 0 8px 0;
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.guia-item ul {
+    margin: 6px 0 0 0;
+    padding-left: 18px;
+}
+
+.guia-item li {
+    margin-bottom: 4px;
+}
+
+/* ==============================================================================
+   9. RODAPÉ (FOOTER)
+   ============================================================================== */
+.app-footer {
+    flex-shrink: 0;
+    margin-top: auto;
+    padding: 25px 20px;
+    background-color: rgba(15, 23, 42, 0.85);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    color: #94A3B8;
+    font-size: 11px;
+    line-height: 1.6;
+    text-align: center;
+}
+
+.footer-container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* ==============================================================================
+   10. MEDIA QUERIES (RESPONSIVIDADE SMARTPHONES & TABLETS)
+   ============================================================================== */
+@media (max-width: 1024px) {
+    .strategy-pills {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+        padding: 6px;
+    }
+    .strategy-pill:not(:last-child)::after {
+        display: none;
+    }
+    .strategy-pill {
+        height: 42px;
+    }
+}
+
 @media (max-width: 768px) {
     .navbar {
         flex-direction: column;
@@ -699,12 +929,12 @@ tr:hover { background-color: var(--bg-surface-hover); }
         justify-content: center;
     }
 
-    .container {
+    main.container {
         padding: 0.8rem;
     }
 
     .metrics-container {
-        grid-template-columns: repeat(2, 1fr); /* 2 CARDS POR LINHA NO CELULAR */
+        grid-template-columns: repeat(2, 1fr);
         gap: 10px;
     }
 
@@ -722,10 +952,6 @@ tr:hover { background-color: var(--bg-surface-hover); }
         padding: 12px;
     }
 
-    .dividend-calendar {
-        grid-template-columns: repeat(4, 1fr); /* 4 MESES POR LINHA EM CELULARES MENORES */
-    }
-
     .raio-x-actions {
         flex-direction: column;
         width: 100%;
@@ -733,5 +959,9 @@ tr:hover { background-color: var(--bg-surface-hover); }
 
     .btn-ri, .btn-relatorio {
         width: 100%;
+    }
+
+    .strategy-pills {
+        grid-template-columns: 1fr;
     }
 }
