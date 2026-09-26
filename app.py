@@ -224,7 +224,7 @@ def get_rankings():
     liq_min = para_float(request.args.get('liq_min'), 100000)
     pl_max = para_float(request.args.get('pl_max'), 30)
     pvp_max = para_float(request.args.get('pvp_max'), 3)
-    dy_min = para_float(request.args.get('dy_min'), 6) / 100.0
+    dy_min = para_float(request.args.get('dy_min'), 0) / 100.0
     roe_min = para_float(request.args.get('roe_min'), 0) / 100.0
     roic_min = para_float(request.args.get('roic_min'), 0) / 100.0
     margem_min = para_float(request.args.get('margem_min'), 0) / 100.0
