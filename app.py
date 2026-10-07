@@ -210,7 +210,8 @@ def get_tickers():
 @app.route('/api/rankings', methods=['GET'])
 def get_rankings():
     df = obter_dados_base()
-    if df.empty: return jsonify([])
+    if df.empty: 
+        return jsonify([])
 
     def para_float(valor, padrao=0.0):
         if str(valor).strip() in ['', 'None', 'null', 'undefined']:
@@ -221,9 +222,13 @@ def get_rankings():
             return float(padrao)
 
     metodo = request.args.get('metodo', 'graham')
+    
+    # Leitura dos Parâmetros de Filtro
     liq_min = para_float(request.args.get('liq_min'), 100000)
     pl_max = para_float(request.args.get('pl_max'), 30)
     pvp_max = para_float(request.args.get('pvp_max'), 3)
+    divida_max = para_float(request.args.get('divida_max'), 3.0)
+    
     dy_min = para_float(request.args.get('dy_min'), 0) / 100.0
     roe_min = para_float(request.args.get('roe_min'), 0) / 100.0
     roic_min = para_float(request.args.get('roic_min'), 0) / 100.0
@@ -233,16 +238,19 @@ def get_rankings():
     mask = (df['liquidez'] >= liq_min)
     if pl_max > 0: mask &= (df['pl'] <= pl_max) & (df['pl'] > 0)
     if pvp_max > 0: mask &= (df['pvp'] <= pvp_max) & (df['pvp'] > 0)
-    if dy_min > 0: mask &= (df['dy'] >= dy_min)
-    if roe_min > 0: mask &= (df['roe'] >= roe_min)
-    if roic_min > 0: mask &= (df['roic'] >= roic_min)
-    if margem_min > 0: mask &= (df['margem'] >= margem_min)
-    if cagr_min > 0: mask &= (df['crescimento'] >= cagr_min)
+    if divida_max > 0: mask &= (df['divida_patrimonio'] <= divida_max)
+    
+    mask &= (df['dy'] >= dy_min)
+    mask &= (df['roe'] >= roe_min)
+    mask &= (df['roic'] >= roic_min)
+    mask &= (df['margem'] >= margem_min)
+    mask &= (df['crescimento'] >= cagr_min)
 
     df = df[mask].copy()
     df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
 
-    if df.empty: return jsonify([])
+    if df.empty: 
+        return jsonify([])
 
     # APLICAÇÃO DAS METODOLOGIAS DE VALUATION
     if metodo == "graham":
@@ -269,10 +277,10 @@ def get_rankings():
         df['potencial'] = df['score']
 
     elif metodo == "lynch":
-        df_l = df[df['pl'] > 0].copy()
+        df_l = df[(df['pl'] > 0) & (df['crescimento'] > 0)].copy()
         if df_l.empty: return jsonify([])
         df_l['crescimento_pct'] = df_l['crescimento'] * 100.0
-        df_l['peg_ratio'] = df_l['pl'] / df_l['crescimento_pct'].replace(0, 1.0)
+        df_l['peg_ratio'] = df_l['pl'] / df_l['crescimento_pct']
         df = df_l.sort_values(by='peg_ratio', ascending=True)
         df['potencial'] = df['crescimento']
 
