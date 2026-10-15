@@ -5,18 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JMP Investimentos</title>
 
+    <!-- Favicon & Recurso Visual -->
     <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/B3SA.png">
 
+    <!-- Fonts do Google (JetBrains Mono & Plus Jakarta Sans) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     
+    <!-- Bibliotecas Externas (Ícones Lucide e Gráficos Plotly) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     
+    <!-- Estilos do Projeto -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
+    <!-- =====================================================================
+         CABEÇALHO E NAVEGAÇÃO PRINCIPAL
+    ====================================================================== -->
     <header class="navbar">
         <div class="brand-container">
             <div class="brand-logo-wrapper">
@@ -27,6 +35,7 @@
             </div>
         </div>
 
+        <!-- Abas de Navegação -->
         <nav class="nav-pills">
             <button class="tab-btn active" onclick="mudarAba('screener')">
                 <i data-lucide="sliders-horizontal"></i> Filtro de Ações
@@ -36,6 +45,7 @@
             </button>
         </nav>
 
+        <!-- Status do Mercado e Relógio -->
         <div id="market-status" class="market-status closed">
             <span class="status-dot"></span>
             <span id="status-text" class="status-text">B3 Mercado Fechado</span>
@@ -44,11 +54,17 @@
         </div>
     </header>
 
+    <!-- =====================================================================
+         CONTEÚDO PRINCIPAL
+    ====================================================================== -->
     <main class="container">
-        <!-- ABA 1: SCREENER DE AÇÕES -->
+
+        <!-- -----------------------------------------------------------------
+             ABA 1: SCREENER DE AÇÕES (Filtro e Ranking)
+        ------------------------------------------------------------------ -->
         <div id="aba-screener" class="aba-content active">
             
-            <!-- SELETOR COMPACTO DE ESTRATÉGIAS EM LINHA -->
+            <!-- Seletor de Estratégias de Valuation -->
             <section class="top-controls">
                 <div class="filter-group select-strategy">
                     <label>
@@ -83,6 +99,7 @@
                 </div>
             </section>
 
+            <!-- Painel Expansível de Filtros Fundamentalistas -->
             <details class="filtros-expander" open>
                 <summary>
                     <div class="summary-title">
@@ -163,7 +180,6 @@
                         </label>
                         <input type="number" id="cagr_min" value="0" onchange="carregarDados()">
                     </div>
-                    <!-- FILTRO ADICIONADO PARA CORRESPONDER AO TCC -->
                     <div class="filter-group">
                         <label>
                             Dívida/Patr. Máx.
@@ -176,6 +192,7 @@
                 </div>
             </details>
 
+            <!-- Cards de Métricas e Resumo -->
             <section class="metrics-container">
                 <div class="metric-card">
                     <div class="metric-header">
@@ -207,6 +224,7 @@
                 </div>
             </section>
 
+            <!-- Tabela Dinâmica de Resultados -->
             <div class="table-wrapper">
                 <table id="tabela-resultados">
                     <thead>
@@ -230,6 +248,7 @@
                 </table>
             </div>
 
+            <!-- Controles de Paginação -->
             <div class="paginacao">
                 <span id="pag-info">Exibindo 0-0 de 0 ativos</span>
                 <div class="pag-controls">
@@ -240,8 +259,12 @@
             </div>
         </div>
 
-        <!-- ABA 2: ANÁLISE DETALHADA -->
+        <!-- -----------------------------------------------------------------
+             ABA 2: ANÁLISE DETALHADA E GRÁFICO
+        ------------------------------------------------------------------ -->
         <div id="aba-detalhes" class="aba-content">
+            
+            <!-- Campo de Busca por Ticker -->
             <section class="chart-header">
                 <div class="filter-group" style="flex-grow: 1;">
                     <label>Buscar Ativo da B3</label>
@@ -254,6 +277,7 @@
             </section>
 
             <div id="analise-wrapper">
+                <!-- Ficha da Empresa (Injetado via JS) -->
                 <div id="ficha-container">
                     <div class="placeholder-box">
                         <i data-lucide="search-code" style="width: 52px; height: 52px; color: var(--accent-green);"></i>
@@ -262,6 +286,7 @@
                     </div>
                 </div>
 
+                <!-- Seção de Gráfico e Controles de Período -->
                 <div id="chart-section" class="raio-x-box" style="padding: 25px 30px; display: none;">
                     <div class="chart-controls">
                         <h4><i data-lucide="candlestick-chart"></i> Histórico de Preços e Indicadores Técnicos</h4>
@@ -279,8 +304,10 @@
                         </div>
                     </div>
                     
+                    <!-- Renderização do Gráfico Plotly -->
                     <div id="chart-container"></div>
 
+                    <!-- Guia Explicativo do Gráfico -->
                     <details class="guia-grafico-expander">
                         <summary>
                             <span><i data-lucide="book-open"></i> Como Interpretar este Gráfico</span>
@@ -310,6 +337,9 @@
         </div>
     </main>
 
+    <!-- =====================================================================
+         RODAPÉ E AVISOS LEGAIS
+    ====================================================================== -->
     <footer class="app-footer">
         <div class="footer-container">
             <p style="margin: 0 0 10px 0;">Esta plataforma possui caráter exclusivamente informativo e analítico, baseando-se em algoritmos e modelos quantitativos públicos. As informações apresentadas não constituem relatório de análise, consultoria ou recomendação de compra e venda de valores mobiliários (Resolução CVM nº 20/2021). Investimentos no mercado de renda variável envolvem riscos de perda patrimonial.</p>
@@ -317,6 +347,7 @@
         </div>
     </footer>
 
+    <!-- Script do Projeto e Inicialização dos Ícones -->
     <script src="script.js"></script>
     <script>
         lucide.createIcons();

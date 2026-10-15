@@ -1,20 +1,18 @@
+/* ==============================================================================
+   CONFIGURAÇÕES GLOBAIS E ESTADO DA APLICAÇÃO
+   ============================================================================== */
 let dadosGlobais = [];
 let paginaAtual = 1;
 const itensPorPagina = 20;
 
-/* ==============================================================================
-   RELOGIO EM TEMPO REAL E STATUS DO MERCADO B3
-   ============================================================================== */
 let feriadosNacionais = [];
 
-const diasHorarioEspecial = {
-    '2026-02-18': { inicio: 13 * 60, fim: 17 * 60 + 55 }, 
-    '2027-02-10': { inicio: 13 * 60, fim: 17 * 60 + 55 }, 
-    '2026-12-24': { inicio: 0, fim: 0 },                  
-    '2026-12-31': { inicio: 0, fim: 0 }                   
-};
+/* ==============================================================================
+   1. OBTENÇÃO DE FERIADOS E STATUS DO MERCADO B3
+   ============================================================================== */
 
-async function carregarFeriadosNacionais() {
+// Obtém os feriados exclusivamente via BrasilAPI
+async function carregarCalendarioMercado() {
     try {
         const anoAtual = new Date().getFullYear();
         const res = await fetch(`https://brasilapi.com.br/api/feriados/v1/${anoAtual}`);
@@ -54,33 +52,32 @@ function verificarStatusMercadoB3() {
     const statusText = document.getElementById('status-text');
     if (!statusBox || !statusText) return;
 
+    // 1. Fim de Semana (Sábado = 6, Domingo = 0)
     if (diaSemana === 0 || diaSemana === 6) {
         statusBox.className = "market-status closed";
         statusText.innerText = "B3 Mercado Fechado";
         return;
     }
 
+    // 2. Feriados Nacionais obtidos da API
     if (feriadosNacionais.includes(dataSP)) {
         statusBox.className = "market-status closed";
         statusText.innerText = "B3 Fechado (Feriado)";
         return;
     }
 
-    let inicioMercado = 10 * 60; 
-    let fimMercado = 18 * 60;    
-
-    if (diasHorarioEspecial[dataSP]) {
-        const configEspecial = diasHorarioEspecial[dataSP];
-        inicioMercado = configEspecial.inicio;
-        fimMercado = configEspecial.fim;
-
-        if (inicioMercado === 0 && fimMercado === 0) {
-            statusBox.className = "market-status closed";
-            statusText.innerText = "B3 Fechado (Sem Pregão)";
-            return;
-        }
+    // 3. Vésperas de Fim de Ano (Sem Pregão)
+    const diaMes = dataSP.slice(5); // Pega 'MM-DD'
+    if (diaMes === '12-24' || diaMes === '12-31') {
+        statusBox.className = "market-status closed";
+        statusText.innerText = "B3 Fechado (Sem Pregão)";
+        return;
     }
 
+    const inicioMercado = 10 * 60; // 10:00h
+    const fimMercado = 18 * 60;    // 18:00h
+
+    // 4. Validação do Horário do Pregão
     if (tempoEmMinutos >= inicioMercado && tempoEmMinutos < fimMercado) {
         statusBox.className = "market-status open";
         if (tempoEmMinutos >= (17 * 60 + 55)) {
@@ -98,7 +95,8 @@ function verificarStatusMercadoB3() {
     }
 }
 
-carregarFeriadosNacionais().then(() => {
+// Inicializadores
+carregarCalendarioMercado().then(() => {
     verificarStatusMercadoB3();
 });
 
@@ -107,19 +105,19 @@ setInterval(verificarStatusMercadoB3, 30000);
 atualizarRelogio();
 
 /* ==============================================================================
-   NAVEGAÇÃO, TOOLTIPS E SELEÇÃO DE ESTRATÉGIA POR PILLS
+   2. NAVEGAÇÃO, TOOLTIPS E SELETORES
    ============================================================================== */
 function mudarAba(aba) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.aba-content').forEach(c => c.classList.remove('active'));
     
-    if(aba === 'screener') {
+    if (aba === 'screener') {
         document.querySelectorAll('.tab-btn')[0].classList.add('active');
         document.getElementById('aba-screener').classList.add('active');
     } else {
         document.querySelectorAll('.tab-btn')[1].classList.add('active');
         document.getElementById('aba-detalhes').classList.add('active');
-        if(document.getElementById('lista-tickers').children.length === 0) carregarTickers();
+        if (document.getElementById('lista-tickers').children.length === 0) carregarTickers();
     }
 }
 
@@ -136,13 +134,13 @@ function atualizarTooltipMetodo() {
     const m = document.getElementById('metodo').value;
     const tt = document.getElementById('tooltip-metodo');
     
-    if(m === 'graham') {
+    if (m === 'graham') {
         tt.setAttribute('data-tooltip', "Benjamin Graham: Calcula o valor intrínseco baseado no patrimônio e lucro da empresa.");
-    } else if(m === 'bazin') {
+    } else if (m === 'bazin') {
         tt.setAttribute('data-tooltip', "Décio Bazin: Focado em renda passiva, calcula o Preço Teto para garantir dividendo mínimo de 6% ao ano.");
-    } else if(m === 'greenblatt') {
+    } else if (m === 'greenblatt') {
         tt.setAttribute('data-tooltip', "Joel Greenblatt: Magic Formula combinando alta rentabilidade com baixo múltiplo.");
-    } else if(m === 'lynch') {
+    } else if (m === 'lynch') {
         tt.setAttribute('data-tooltip', "Peter Lynch: Identifica ações de crescimento dividindo o P/L pelo crescimento da receita (PEG).");
     }
 }
@@ -156,7 +154,7 @@ function selecionarPeriodo(periodo) {
 }
 
 /* ==============================================================================
-   CONSULTA E RENDERIZAÇÃO DA TABELA
+   3. CONSULTA E RENDERIZAÇÃO DA TABELA (SCREENER)
    ============================================================================== */
 async function carregarDados() {
     const tbody = document.querySelector('#tabela-resultados tbody');
@@ -164,20 +162,23 @@ async function carregarDados() {
     
     const p = param => document.getElementById(param) ? document.getElementById(param).value : 0;
     
-    // INCLUÍDO 'divida_max' NA REQUISIÇÃO
     const url = `https://jmpinvestimentos.onrender.com/api/rankings?metodo=${p('metodo')}&liq_min=${p('liq_min')}&pl_max=${p('pl_max')}&pvp_max=${p('pvp_max')}&dy_min=${p('dy_min')}&roe_min=${p('roe_min')}&roic_min=${p('roic_min')}&margem_min=${p('margem_min')}&cagr_min=${p('cagr_min')}&divida_max=${p('divida_max')}`;
     
     try {
         const res = await fetch(url);
         dadosGlobais = await res.json();
         paginaAtual = 1;        
+        
+        // Atualização de KPIs
         document.getElementById('kpi-count').innerText = dadosGlobais.length;
         const pls = dadosGlobais.filter(d => d.pl > 0).map(d => d.pl).sort((a,b) => a-b);
         document.getElementById('kpi-pl').innerText = pls.length ? `${pls[Math.floor(pls.length/2)].toFixed(1)}x` : '-';
+        
         const med = campo => dadosGlobais.reduce((acc, item) => acc + item[campo], 0) / (dadosGlobais.length || 1);
-        document.getElementById('kpi-roic').innerText = `${(med('roic')*100).toFixed(1)}%`;
-        document.getElementById('kpi-dy').innerText = `${(med('dy')*100).toFixed(1)}%`;
+        document.getElementById('kpi-roic').innerText = `${(med('roic') * 100).toFixed(1)}%`;
+        document.getElementById('kpi-dy').innerText = `${(med('dy') * 100).toFixed(1)}%`;
 
+        // Ajuste Dinâmico do Cabeçalho da Tabela
         const m = p('metodo');
         const col1 = document.getElementById('th-col1');
         const col2 = document.getElementById('th-col2');
@@ -185,16 +186,16 @@ async function carregarDados() {
         col1.style.display = "";
         col2.style.display = "";
         
-        if(m === 'graham') {
+        if (m === 'graham') {
             col1.innerHTML = 'Valor Justo Graham';
             col2.innerHTML = 'Margem de Segurança';
-        } else if(m === 'bazin') {
+        } else if (m === 'bazin') {
             col1.innerHTML = 'Preço Teto Bazin';
             col2.innerHTML = 'Potencial de Renda';
-        } else if(m === 'greenblatt') {
+        } else if (m === 'greenblatt') {
             col1.innerHTML = 'Pontuação Geral';
             col2.style.display = "none"; 
-        } else if(m === 'lynch') {
+        } else if (m === 'lynch') {
             col1.innerHTML = 'PEG Ratio';
             col2.innerHTML = 'Crescimento (CAGR)';
         }
@@ -235,15 +236,15 @@ function renderizarTabela() {
         let tdCol1 = '';
         let tdCol2 = '';
 
-        if(m === 'graham') {
+        if (m === 'graham') {
             tdCol1 = `<td><strong>R$ ${item.valor_justo.toFixed(2)}</strong></td>`;
             tdCol2 = `<td class="val-positive">${(item.potencial * 100).toFixed(1)}%</td>`;
-        } else if(m === 'bazin') {
+        } else if (m === 'bazin') {
             tdCol1 = `<td><strong>R$ ${item.preco_teto.toFixed(2)}</strong></td>`;
             tdCol2 = `<td class="val-positive">${(item.potencial * 100).toFixed(1)}%</td>`;
-        } else if(m === 'greenblatt') {
+        } else if (m === 'greenblatt') {
             tdCol1 = `<td><strong>${item.potencial} pts</strong></td>`;
-        } else if(m === 'lynch') {
+        } else if (m === 'lynch') {
             tdCol1 = `<td><strong>${item.peg_ratio.toFixed(2)}</strong></td>`;
             tdCol2 = `<td class="val-positive">${(item.crescimento * 100).toFixed(1)}% a.a.</td>`;
         }
@@ -277,8 +278,8 @@ function renderizarTabela() {
 function mudarPagina(direcao) {
     const totalPaginas = Math.ceil(dadosGlobais.length / itensPorPagina);
     paginaAtual += direcao;
-    if(paginaAtual < 1) paginaAtual = 1;
-    if(paginaAtual > totalPaginas) paginaAtual = totalPaginas;
+    if (paginaAtual < 1) paginaAtual = 1;
+    if (paginaAtual > totalPaginas) paginaAtual = totalPaginas;
     renderizarTabela();
 }
 
@@ -320,12 +321,12 @@ function gerarModuloProventos(dyDecimal, precoAtual, dpa12m) {
 }
 
 /* ==============================================================================
-   ANÁLISE DETALHADA E GRÁFICOS TÉCNICOS
+   4. ANÁLISE DETALHADA E GRÁFICOS TÉCNICOS (PLOTLY)
    ============================================================================== */
 async function carregarAnalise() {
     const t = document.getElementById('input-ticker').value.toUpperCase().trim();
     const p = document.getElementById('select-periodo').value;
-    if(!t) return;
+    if (!t) return;
 
     const fichaContainer = document.getElementById('ficha-container');
     const chartSection = document.getElementById('chart-section');
@@ -334,7 +335,7 @@ async function carregarAnalise() {
     chartSection.style.display = "block";
     chartContainer.innerHTML = `<div class="spinner-box" style="min-height: 400px;"><div class="spinner"></div><strong>Carregando dados técnicos...</strong></div>`;
     
-    if(fichaContainer.innerHTML.includes('placeholder-box') || fichaContainer.innerHTML === '') {
+    if (fichaContainer.innerHTML.includes('placeholder-box') || fichaContainer.innerHTML === '') {
         fichaContainer.innerHTML = `<div class="spinner-box"><div class="spinner"></div><strong>Obtendo indicadores fundamentalistas...</strong></div>`;
     }
 
@@ -342,7 +343,7 @@ async function carregarAnalise() {
         const res = await fetch(`https://jmpinvestimentos.onrender.com/api/analise?ticker=${t}&periodo=${p}`);
         const data = await res.json();
 
-        if(data.error) {
+        if (data.error) {
             fichaContainer.innerHTML = `<div class="placeholder-box"><h3 style="color:#ef5350;">Atenção: ${data.error}</h3><p>Verifique se o código do ativo foi digitado corretamente.</p></div>`;
             chartSection.style.display = "none";
             return;
@@ -352,8 +353,8 @@ async function carregarAnalise() {
         const cd = data.chart_data;
         const fallbackAvatar = `https://ui-avatars.com/api/?name=${data.ticker.slice(0,2)}&background=1E293B&color=10B981&bold=true&size=64`;
 
-        const fmtM = val => `R$ ${(val/1000000).toFixed(1)}M`;
-        const fmtP = val => `${(val*100).toFixed(1)}%`;
+        const fmtM = val => `R$ ${(val / 1000000).toFixed(1)}M`;
+        const fmtP = val => `${(val * 100).toFixed(1)}%`;
         const fmtX = val => `${val.toFixed(2)}x`;
 
         const proventosHtml = gerarModuloProventos(f.dy, f.preco, f.dpa_12m);
@@ -412,50 +413,51 @@ async function carregarAnalise() {
 
         if (window.lucide) lucide.createIcons();
 
-        if(cd && cd.dates.length > 0) {
+        // Renderização do Gráfico Técnico Plotly
+        if (cd && cd.dates.length > 0) {
             chartContainer.innerHTML = ''; 
             
             const traceCandle = {
                 x: cd.dates, open: cd.open, high: cd.high, low: cd.low, close: cd.close,
                 type: 'candlestick', name: 'Cotação',
-                increasing: {line: {color: '#10B981'}}, decreasing: {line: {color: '#F43F5E'}}, yaxis: 'y'
+                increasing: { line: { color: '#10B981' } }, decreasing: { line: { color: '#F43F5E' } }, yaxis: 'y'
             };
 
             const traceMA50 = {
                 x: cd.dates, y: cd.ma50, type: 'scatter', mode: 'lines',
-                line: {color: '#F59E0B', width: 1.5}, name: 'MM 50d', yaxis: 'y'
+                line: { color: '#F59E0B', width: 1.5 }, name: 'MM 50d', yaxis: 'y'
             };
             const traceMA200 = {
                 x: cd.dates, y: cd.ma200, type: 'scatter', mode: 'lines',
-                line: {color: '#3B82F6', width: 2}, name: 'MM 200d', yaxis: 'y'
+                line: { color: '#3B82F6', width: 2 }, name: 'MM 200d', yaxis: 'y'
             };
 
             const traceVolume = {
                 x: cd.dates, y: cd.volume, type: 'bar', name: 'Volume',
-                marker: {color: 'rgba(255, 255, 255, 0.1)'}, yaxis: 'y2'
+                marker: { color: 'rgba(255, 255, 255, 0.1)' }, yaxis: 'y2'
             };
 
             const traceRSI = {
                 x: cd.dates, y: cd.rsi, type: 'scatter', mode: 'lines',
-                line: {color: '#A855F7', width: 2}, name: 'IFR (14)', xaxis: 'x', yaxis: 'y3'
+                line: { color: '#A855F7', width: 2 }, name: 'IFR (14)', xaxis: 'x', yaxis: 'y3'
             };
 
             const lineSobrecompra = {
                 x: [cd.dates[0], cd.dates[cd.dates.length - 1]], y: [70, 70],
-                type: 'scatter', mode: 'lines', line: {color: '#F43F5E', width: 1, dash: 'dot'},
+                type: 'scatter', mode: 'lines', line: { color: '#F43F5E', width: 1, dash: 'dot' },
                 name: 'Sobrecompra (70)', yaxis: 'y3', showlegend: false
             };
             const lineSobrevenda = {
                 x: [cd.dates[0], cd.dates[cd.dates.length - 1]], y: [30, 30],
-                type: 'scatter', mode: 'lines', line: {color: '#10B981', width: 1, dash: 'dot'},
+                type: 'scatter', mode: 'lines', line: { color: '#10B981', width: 1, dash: 'dot' },
                 name: 'Sobrevenda (30)', yaxis: 'y3', showlegend: false
             };
 
             const layout = {
                 template: 'plotly_dark', plot_bgcolor: '#0F172A', paper_bgcolor: '#111827',
-                height: 560, margin: {l: 50, r: 20, t: 20, b: 30},
+                height: 560, margin: { l: 50, r: 20, t: 20, b: 30 },
                 grid: { rows: 2, columns: 1, subplots: [['xy'], ['xy3']], roworder: 'top to bottom' },
-                xaxis: { type: 'category', nticks: 10, gridcolor: '#1E293B', rangeslider: {visible: false} },
+                xaxis: { type: 'category', nticks: 10, gridcolor: '#1E293B', rangeslider: { visible: false } },
                 yaxis: { title: 'Preço (R$)', domain: [0.38, 1], gridcolor: '#1E293B' },
                 yaxis2: { overlaying: 'y', side: 'right', showgrid: false, showticklabels: false },
                 yaxis3: { title: 'IFR (0-100)', domain: [0, 0.26], range: [0, 100], gridcolor: '#1E293B' },
@@ -469,6 +471,7 @@ async function carregarAnalise() {
     }
 }
 
+// Evento de Inicialização
 window.onload = () => {
     atualizarTooltipMetodo();
     carregarDados();

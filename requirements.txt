@@ -9,4 +9,3 @@ gunicorn==21.2.0
 cloudscraper==1.2.71
 psycopg2-binary==2.9.9
 sqlalchemy==2.0.30
-
