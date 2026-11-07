@@ -41,21 +41,37 @@ def uma_acao_por_empresa(df):
 
 
 def aplicar_filtros(df, f):
-    """Filtros do usuário. Valor None (campo vazio) ou máximo 0 desliga o filtro."""
+    """
+    Filtros do usuário. Valor None (campo vazio) ou máximo 0 desliga o filtro.
+
+    Regra única para indicador ausente na API, decidida pelo motivo da ausência:
+      - prejuízo ou patrimônio negativo: a API não calcula P/L, P/VP, ROE etc. nesses
+        casos, e a própria ausência mostra que a empresa está fora do critério -> reprova;
+      - falta de cobertura da fonte (lucro e patrimônio positivos, mas o indicador não
+        veio): não há informação para julgar -> não reprova (aparece como N/D na tela).
+    O motivo é decidido só com outros campos da API (LPA, VPA e patrimônio), sem estimar
+    nenhum valor. Os dados exigidos pela fórmula de cada método continuam obrigatórios.
+    """
+    prejuizo_ou_patrimonio_negativo = (df["lpa"] <= 0) | (df["vpa"] < 0) | (df["patrimonio"] <= 0)
+
+    def atende(coluna, condicao):
+        lacuna_da_fonte = df[coluna].isna() & ~prejuizo_ou_patrimonio_negativo
+        return condicao | lacuna_da_fonte
+
     m = pd.Series(True, index=df.index)
-    if f["liq_min"] is not None:
+    if f["liq_min"] is not None:   # liquidez é exigida: sem volume negociado não há como operar a ação
         m &= df["liquidez"] >= f["liq_min"]
     if f["pl_max"]:   # P/L negativo = prejuízo
-        m &= df["pl"].between(0, f["pl_max"], inclusive="right")
+        m &= atende("pl", df["pl"].between(0, f["pl_max"], inclusive="right"))
     if f["pvp_max"]:  # P/VP negativo = patrimônio negativo
-        m &= df["pvp"].between(0, f["pvp_max"], inclusive="right")
+        m &= atende("pvp", df["pvp"].between(0, f["pvp_max"], inclusive="right"))
     if f["divida_max"]:
-        m &= (df["patrimonio"] > 0) & (df["divida_patrimonio"] <= f["divida_max"])
+        m &= atende("divida_patrimonio", (df["patrimonio"] > 0) & (df["divida_patrimonio"] <= f["divida_max"]))
     for chave, coluna in [("dy_min", "dy"), ("roe_min", "roe"), ("roic_min", "roic"),
                           ("margem_min", "margem"), ("cagr_min", "crescimento")]:
         if f[chave] is not None:
-            m &= df[coluna] >= f[chave] / 100
-    return df[m]   # ação sem o dado (NaN) não passa: comparação com NaN é falsa
+            m &= atende(coluna, df[coluna] >= f[chave] / 100)
+    return df[m]
 
 
 def graham(df):

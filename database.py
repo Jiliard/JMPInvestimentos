@@ -34,6 +34,7 @@ except ImportError:
 
 
 URL_BANCO = os.getenv("DATABASE_URL")
+URL_SERVIDOR = os.getenv("URL_SERVIDOR", "https://jmpinvestimentos.onrender.com")
 FUSO_B3 = ZoneInfo("America/Sao_Paulo")
 
 # Colunas gravadas nas duas tabelas (a ordem importa para os INSERTs).
@@ -199,6 +200,33 @@ def inicializar_banco():
         print("✅ [BANCO] Tabelas prontas no Supabase.")
     except Exception as erro:
         print(f"🚨 [BANCO] Erro ao inicializar tabelas: {erro}")
+    agendar_rotina()
+
+
+def agendar_rotina():
+    """
+    Rotina diária garantida, agendada DENTRO do Supabase (extensões pg_cron e pg_net).
+
+    A cada 10 minutos o banco chama a rota /api/saude do servidor. Isso:
+      - mantém o servidor do Render acordado (o plano gratuito dorme após 15 min
+        sem acesso), então a plataforma responde na hora com os últimos dados;
+      - durante o pregão, faz o servidor coletar na API e gravar o dia no banco.
+
+    O agendador do banco é mais confiável que o do GitHub Actions, que atrasa
+    ou pula execuções; o cron.yml continua como segunda rotina, independente.
+    `cron.schedule` com o mesmo nome substitui o agendamento: pode rodar sempre.
+    """
+    sql = f"""
+        CREATE EXTENSION IF NOT EXISTS pg_cron;
+        CREATE EXTENSION IF NOT EXISTS pg_net;
+        SELECT cron.schedule('jmp_rotina_diaria', '*/10 * * * *',
+                             $$SELECT net.http_get('{URL_SERVIDOR}/api/saude', timeout_milliseconds := 60000)$$);
+    """
+    try:
+        _executar(lambda cursor: cursor.execute(sql))
+        print("✅ [BANCO] Rotina diária agendada no Supabase (a cada 10 min).")
+    except Exception as erro:
+        print(f"🚨 [BANCO] Não foi possível agendar a rotina no Supabase: {erro}")
 
 
 # =============================================================================
@@ -239,15 +267,38 @@ def salvar_coleta(df):
         execute_values(cursor, sql_cache, [linha + (momento,) for linha in linhas])
         if len(tickers) >= MINIMO_ACOES_COLETA_COMPLETA:
             cursor.execute(sql_remover_antigas, (tickers,))
+        if _sem_pregao(cursor, pregao, linhas):
+            return False
         execute_values(cursor, sql_historico, [(pregao,) + linha + (momento,) for linha in linhas])
+        return True
 
     try:
-        _executar(_gravar)
-        print(f"🚀 [BANCO] {len(linhas)} ações gravadas (coleta {momento:%d/%m/%Y %H:%M}, pregão {pregao:%d/%m/%Y}).")
+        registrou = _executar(_gravar)
+        destino = f"pregão {pregao:%d/%m/%Y}" if registrou else "só no cache: preços iguais ao pregão anterior (feriado)"
+        print(f"🚀 [BANCO] {len(linhas)} ações gravadas (coleta {momento:%d/%m/%Y %H:%M}, {destino}).")
         return True
     except Exception as erro:
         print(f"🚨 [BANCO] Erro ao gravar coleta: {erro}")
         return False
+
+
+def _sem_pregao(cursor, pregao, linhas):
+    """
+    True se a coleta repete os preços do último pregão registrado: em feriado de dia
+    útil a API continua mostrando o fechamento anterior, e esse "dia" não pode entrar
+    no histórico com outra data. Num pregão normal, a maioria das cotações muda.
+    """
+    cursor.execute("""
+        SELECT ticker, preco FROM historico_diario
+        WHERE data = (SELECT MAX(data) FROM historico_diario WHERE data < %s);
+    """, (pregao,))
+    anteriores = dict(cursor.fetchall())
+    precos = {linha[0]: linha[COLUNAS.index("preco")] for linha in linhas}
+    comuns = [t for t in precos if anteriores.get(t) and precos[t]]
+    if len(comuns) < MINIMO_ACOES_COLETA_COMPLETA:
+        return False
+    iguais = sum(abs(precos[t] / anteriores[t] - 1) < 1e-4 for t in comuns)
+    return iguais >= 0.9 * len(comuns)
 
 
 # =============================================================================

@@ -13,7 +13,8 @@ const API = (location.origin === API_PRODUCAO || location.port === '5000') ? '' 
 const FILTROS_PADRAO = { liq_min: 100000, pl_max: 20, pvp_max: 2, divida_max: 1.5, roe_min: 10,
                          roic_min: 10, margem_min: 5, cagr_min: 0, dy_min: 0 };
 const ITENS_POR_PAGINA = 25;
-const CHAVE_CACHE = 'jmp:ultima-busca:v2';
+const CHAVE_CACHE = 'jmp:buscas:v3';        // últimas respostas por método/filtros, para exibir na hora
+const METODO_PADRAO = 'graham';
 const CHAVE_PREFERENCIAS = 'jmp:preferencias:v1';
 
 let dados = [];
@@ -36,7 +37,7 @@ const grande = v => {   // valores grandes: R$ 1,2 bi / R$ 350,0 mi
     const [divisor, sufixo] = Math.abs(v) >= 1e9 ? [1e9, ' bi'] : Math.abs(v) >= 1e6 ? [1e6, ' mi'] : [1e3, ' mil'];
     return 'R$ ' + formato(1).format(v / divisor) + sufixo;
 };
-const cor = v => ehNumero(v) && v < 0 ? 'baixa' : 'alta';
+const cor = v => !ehNumero(v) ? '' : v < 0 ? 'baixa' : 'alta';   // sem dado: sem cor
 
 // Preferências da tela (colunas visíveis) guardadas no navegador
 function lerArmazenado(chave) { try { return JSON.parse(localStorage.getItem(chave)); } catch { return null; } }
@@ -298,53 +299,71 @@ function mensagemTabela(titulo, texto = '', carregando = false) {
         ${carregando ? '<div class="carregador"></div>' : ''}<h3>${escapar(titulo)}</h3><p>${escapar(texto)}</p></td></tr>`;
 }
 
+// Cache das últimas buscas no navegador: { filtros: últimos filtros usados, buscas: { chave: resposta } }
+const lerCache = () => Object.assign({ filtros: null, buscas: {} }, lerArmazenado(CHAVE_CACHE));
+const chaveBusca = filtros => JSON.stringify(filtros);
+
+function guardarBusca(filtros, dados, dataBase) {
+    const cache = lerCache();
+    cache.filtros = filtros;
+    cache.buscas[chaveBusca(filtros)] = { dados, dataBase, quando: Date.now() };
+    // Mantém só as 30 buscas mais recentes
+    const chaves = Object.keys(cache.buscas).sort((a, b) => cache.buscas[b].quando - cache.buscas[a].quando);
+    chaves.slice(30).forEach(c => delete cache.buscas[c]);
+    gravarArmazenado(CHAVE_CACHE, cache);
+}
+
 /**
- * Consulta o ranking. Na abertura da página (usarCache = true) mostra na hora a
- * última busca salva no navegador e atualiza os dados por baixo dos panos.
+ * Consulta o ranking com resposta imediata: se esta mesma busca (método + filtros) já
+ * foi feita, mostra na hora o último resultado e atualiza por baixo dos panos. Na
+ * primeira visita, o servidor responde com a última coleta gravada no banco.
  * forcar = true (ícone de atualizar) pede ao servidor uma coleta nova antes de responder.
  */
-async function carregarDados(usarCache = false, forcar = false) {
+async function carregarDados(forcar = false) {
     atualizarSeloFiltros();
     const filtros = lerTela();
-    if (forcar && !filtros.data) filtros.atualizar = '1';   // botão de atualizar: coleta nova no TradingView
-    $('botao-atualizar').classList.add('girando');
+    const anterior = lerCache().buscas[chaveBusca(filtros)];
     const id = ++ultimaRequisicao;
-    const cache = usarCache && lerArmazenado(CHAVE_CACHE);
+    $('botao-atualizar').classList.add('girando');
 
-    if (cache?.dados) {
-        exibir(cache.dados);
-        status(`${descreverData(cache.dataBase, !!cache.filtros.data)} · atualizando...`, 'carregando');
+    let avisoLento;
+    if (anterior) {
+        exibir(anterior.dados);
+        status(`${descreverData(anterior.dataBase, !!filtros.data)} · atualizando...`, 'carregando');
     } else {
-        mensagemTabela('Consultando o mercado...', '', true);
+        mensagemTabela('Consultando...', '', true);
         status('Consultando...', 'carregando');
+        // O servidor gratuito pode estar reiniciando: explica a espera em vez de parecer travado
+        avisoLento = setTimeout(() => id === ultimaRequisicao &&
+            mensagemTabela('O servidor está iniciando', 'A primeira consulta pode levar até 1 minuto. As próximas são imediatas.', true), 4000);
     }
 
     try {
-        const resposta = await fetch(`${API}/api/rankings?${new URLSearchParams(filtros)}`);
+        const parametros = forcar && !filtros.data ? { ...filtros, atualizar: '1' } : filtros;
+        const resposta = await fetch(`${API}/api/rankings?${new URLSearchParams(parametros)}`);
         const corpo = await resposta.json().catch(() => null);
         if (id !== ultimaRequisicao) return;          // o usuário já mudou o filtro
         if (!resposta.ok || !Array.isArray(corpo)) throw new Error(corpo?.error || `Erro ${resposta.status} no servidor.`);
 
         const dataBase = resposta.headers.get('X-Data-Base') || '';
-        // Com data de referência, o servidor devolve o dia usado (AAAA-MM-DD). Se não devolver,
-        // ele ignorou a data (ex.: versão antiga publicada) e os dados seriam os atuais.
+        // Com data de referência, o servidor devolve o pregão usado (AAAA-MM-DD)
         if (filtros.data && !/^\d{4}-\d{2}-\d{2}$/.test(dataBase)) {
-            throw new Error('O servidor não aplicou a data de referência (a versão publicada ainda não tem o modo de teste). Os dados atuais não foram exibidos para evitar confusão.');
+            throw new Error('O servidor não aplicou a data de referência. Os dados atuais não foram exibidos para evitar confusão.');
         }
         exibir(corpo);
         status(descreverData(dataBase, !!filtros.data));
-        delete filtros.atualizar;
-        gravarArmazenado(CHAVE_CACHE, { filtros, dados: corpo, dataBase });
+        guardarBusca(filtros, corpo, dataBase);
     } catch (erro) {
         if (id !== ultimaRequisicao) return;
         const semConexao = erro instanceof TypeError;   // falha de rede (ex.: servidor acordando)
         const texto = semConexao ? 'Servidor iniciando. Tente novamente em alguns segundos.' : erro.message;
         // Sem conexão, mantém a última busca na tela; erro do servidor (ex.: data sem histórico) é mostrado na tabela
-        if (semConexao && cache?.dados) return status(`${texto} Exibindo a última busca.`, 'erro');
+        if (semConexao && anterior) return status(`${texto} Exibindo a última busca.`, 'erro');
         exibir([], false);
         status(texto, 'erro');
         mensagemTabela(filtros.data ? 'Sem dados para a data de referência' : 'Não foi possível carregar o ranking', texto);
     } finally {
+        clearTimeout(avisoLento);
         if (id === ultimaRequisicao) $('botao-atualizar').classList.remove('girando');
     }
 }
@@ -648,13 +667,20 @@ function resumoPeriodo(g) {
     const minima = Math.min(...g.low.filter(ehNumero));
     const atual = fechamentos.at(-1);
     const variacao = atual / fechamentos[0] - 1;
-    const volumeMedio = g.volume.reduce((a, b) => a + (b || 0), 0) / g.volume.length;
+    const volumes = g.volume.filter(ehNumero);
+    const volumeMedio = volumes.length ? volumes.reduce((a, b) => a + b, 0) / volumes.length : null;
     const item = (rotulo, valor, dica, classe = '') => `<div title="${dica}"><span>${rotulo}</span><strong class="${classe}">${valor}</strong></div>`;
-    return item('Variação no período', (variacao > 0 ? '+' : '') + pct(variacao), 'Do primeiro ao último fechamento exibido', cor(variacao)) +
+    const ibov = (g.ibov || []).filter(ehNumero);
+    const variacaoIbov = ibov.length > 1 ? ibov.at(-1) / ibov[0] - 1 : null;
+    const sinal = v => (v > 0 ? '+' : '') + pct(v);
+    return item('Variação no período', sinal(variacao), 'Do primeiro ao último fechamento exibido', cor(variacao)) +
+        item('Ibovespa no período', ehNumero(variacaoIbov) ? sinal(variacaoIbov) : 'N/D', 'Variação do índice no mesmo período', cor(variacaoIbov)) +
         item('Máxima', reais(maxima), 'Maior preço negociado no período') +
         item('Mínima', reais(minima), 'Menor preço negociado no período') +
         item('Distância da máxima', pct(atual / maxima - 1), 'Quanto a cotação atual está abaixo da máxima do período', cor(atual / maxima - 1)) +
-        item('Volume médio', new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 }).format(volumeMedio) + ' ações',
+        item('Ação x Ibovespa', ehNumero(variacaoIbov) ? sinal((1 + variacao) / (1 + variacaoIbov) - 1) : 'N/D',
+             'Quanto a ação foi melhor (+) ou pior (−) que o Ibovespa no período', ehNumero(variacaoIbov) ? cor((1 + variacao) / (1 + variacaoIbov) - 1) : '') +
+        item('Volume médio', ehNumero(volumeMedio) ? new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 }).format(volumeMedio) + ' ações' : 'N/D',
              'Média de ações negociadas por candle no período');
 }
 
@@ -672,6 +698,10 @@ function desenharGrafico(g, periodo) {
           marker: { color: subiu.map(s => s ? 'rgba(22,199,132,.25)' : 'rgba(234,57,67,.25)') } },
         { name: 'IFR (14)', x: g.dates, y: g.rsi, yaxis: 'y3', mode: 'lines', line: { color: '#a78bfa', width: 1.5 } },
         linhaRef(70, '#ea3943'), linhaRef(30, '#16c784'),
+        // Ibovespa na mesma base da ação (começa no mesmo preço): mostra quem subiu mais no período
+        ...(g.ibov_base?.some(ehNumero) ? [{ name: 'Ibovespa (mesma base)', x: g.dates, y: g.ibov_base, customdata: g.ibov,
+            mode: 'lines', line: { color: '#cbd5e1', width: 1.5, dash: 'dot' },
+            hovertemplate: 'Ibovespa: %{customdata:,.0f} pts<extra></extra>' }] : []),
     ];
     const eixo = { gridcolor: '#222c40', zerolinecolor: '#222c40' };
     const layout = {
@@ -731,15 +761,15 @@ async function carregarAnalise() {
 
 /* ------------------------------ INICIALIZAÇÃO ------------------------------ */
 document.addEventListener('DOMContentLoaded', () => {
-    // Abre com a última busca (filtros e resultados) e atualiza em segundo plano
-    const cache = lerArmazenado(CHAVE_CACHE);
-    preencherFiltros(cache?.filtros || FILTROS_PADRAO);
-    $('data_ref').value = cache?.filtros?.data || '';
+    // Abre no método Graham, com os últimos filtros usados; se essa busca já foi feita, aparece na hora
+    const cache = lerCache();
+    preencherFiltros(cache.filtros || FILTROS_PADRAO);
+    $('data_ref').value = cache.filtros?.data || '';
     if ($('data_ref').value) $('data_ref').closest('details').open = true;
     montarMenuColunas();
     montarExplicacoesMetodos();
-    marcarEstrategia(cache?.filtros?.metodo || 'graham');
-    carregarDados(true);
+    marcarEstrategia(METODO_PADRAO);
+    carregarDados();
     configurarDataReferencia();
 
     // Fecha o menu de colunas ao clicar fora dele ou apertar Esc

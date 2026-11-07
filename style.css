@@ -270,13 +270,13 @@ tbody tr:nth-child(-n+3) .posicao { background: var(--marca-suave); color: var(-
 #chart-container { min-height: 560px; margin-top: 8px; }
 
 /* Resumo do período do gráfico */
-.resumo-periodo { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 12px; }
+.resumo-periodo { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
 .resumo-periodo div { background: var(--superficie-2); border: 1px solid var(--borda); border-radius: 8px; padding: 8px 12px; }
 .resumo-periodo span { display: block; font-size: 11px; font-weight: 600; color: var(--texto-2); text-transform: uppercase; letter-spacing: .05em; }
 .resumo-periodo strong { font-size: 16px; font-variant-numeric: tabular-nums; }
 
 /* Como ler o gráfico */
-.como-ler { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 10px 0 8px; }
+.como-ler { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 10px 0 8px; }
 .como-ler div { background: var(--superficie-2); border: 1px solid var(--borda); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; }
 .como-ler b { font-size: 13px; }
 .como-ler p { margin: 4px 0 0; color: var(--texto-2); line-height: 1.45; }

@@ -298,12 +298,15 @@ def montar_grafico(ticker, periodo):
     Busca as cotações no Yahoo Finance e calcula os indicadores técnicos:
     IFR(14) de Wilder e médias móveis de 50 e 200 pregões (10 e 40 semanas no semanal).
     Busca 300 dias a mais para os indicadores já começarem calculados no 1º dia exibido.
+    Também traz o Ibovespa no mesmo período, para comparar o desempenho da ação com o mercado.
     """
     dias, semanal = PERIODOS.get(periodo, PERIODOS["1 Ano"])
     agora = time.time()
-    df = coleta.buscar_cotacoes_yahoo(ticker, agora - (dias + 300) * 86400, agora, "1wk" if semanal else "1d")
+    intervalo = "1wk" if semanal else "1d"
+    df = coleta.buscar_cotacoes_yahoo(f"{ticker}.SA", agora - (dias + 300) * 86400, agora, intervalo)
     if df.empty:
         return None
+    ibov = coleta.buscar_cotacoes_yahoo("^BVSP", agora - (dias + 300) * 86400, agora, intervalo)
 
     variacao = df["close"].diff()
     ganho = variacao.clip(lower=0).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
@@ -315,12 +318,22 @@ def montar_grafico(ticker, periodo):
     df["ma200"] = df["close"].rolling(longa).mean()
 
     inicio = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=dias)
-    df = df[df["date"] >= inicio]
+    df = df[df["date"] >= inicio].copy()
     if df.empty:
         return None
-    colunas = ("open", "high", "low", "close", "volume", "rsi", "ma50", "ma200")
-    return {"dates": df["date"].dt.strftime("%Y-%m-%d").tolist(),
-            **{c: [_numero(v) for v in df[c]] for c in colunas}}
+    df["dia"] = df["date"].dt.strftime("%Y-%m-%d")
+
+    # Ibovespa alinhado pelas datas da ação e "rebaseado": começa no mesmo preço da ação,
+    # então as duas linhas mostram a variação no período na mesma escala.
+    df["ibov"] = np.nan
+    if not ibov.empty:
+        pontos = ibov.assign(dia=ibov["date"].dt.strftime("%Y-%m-%d")).drop_duplicates("dia", keep="last")
+        df["ibov"] = df["dia"].map(pontos.set_index("dia")["close"])
+    base = df["ibov"].dropna()
+    df["ibov_base"] = df["ibov"] / base.iloc[0] * df.loc[base.index[0], "close"] if len(base) else np.nan
+
+    colunas = ("open", "high", "low", "close", "volume", "rsi", "ma50", "ma200", "ibov", "ibov_base")
+    return {"dates": df["dia"].tolist(), **{c: [_numero(v) for v in df[c]] for c in colunas}}
 
 
 # Indicadores comparados com o setor e o mercado. Nos múltiplos de preço, a mediana

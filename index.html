@@ -82,7 +82,7 @@
                     <input type="number" id="divida_max" step="0.1" onchange="carregarDados()"></label>
             </div>
             <div class="rodape-filtros">
-                <span class="dica">Campo vazio desativa o filtro.</span>
+                <span class="dica">Campo vazio desativa o filtro. Indicador sem dado na API (N/D) não elimina a empresa, exceto quando falta por prejuízo ou patrimônio negativo.</span>
                 <button class="link" onclick="restaurarPadrao()"><i data-lucide="rotate-ccw"></i> Restaurar padrão</button>
             </div>
         </details>
@@ -100,7 +100,7 @@
             <div class="tabela-topo">
                 <div class="atualizacao">
                     <span id="status-dados" class="status" aria-live="polite"></span>
-                    <button id="botao-atualizar" class="botao-icone pequeno" onclick="carregarDados(false, true)"
+                    <button id="botao-atualizar" class="botao-icone pequeno" onclick="carregarDados(true)"
                             title="Buscar os dados mais recentes agora" aria-label="Atualizar dados"><i data-lucide="refresh-cw"></i></button>
                 </div>
                 <div class="menu-colunas">
@@ -182,6 +182,8 @@
                     <b>Volume</b><p>Barras no rodapé do gráfico: quanto foi negociado. Movimentos com volume alto são mais relevantes do que com volume baixo.</p></div>
                 <div><span class="legenda-cor" style="background:#a78bfa"></span>
                     <b>IFR (14)</b><p>Força das altas e baixas recentes, de 0 a 100. Acima de 70: possível sobrecompra; abaixo de 30: possível sobrevenda.</p></div>
+                <div><span class="legenda-cor" style="background:repeating-linear-gradient(90deg,#cbd5e1 0 4px,transparent 4px 7px)"></span>
+                    <b>Ibovespa</b><p>Linha pontilhada: o índice da bolsa ajustado para começar no mesmo preço da ação. Ação acima da linha: foi melhor que o mercado no período.</p></div>
             </div>
             <p class="dica">A análise técnica é apenas ilustrativa e não entra nos rankings, que usam somente os indicadores fundamentalistas.</p>
         </div>

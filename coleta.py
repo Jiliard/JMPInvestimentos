@@ -5,9 +5,9 @@ Coleta de dados nas APIs financeiras.
 - Yahoo Finance: histórico de cotações para o gráfico técnico.
 
 Regra geral: os indicadores vêm prontos da API. Quando a API não traz um
-dado, ele fica como NaN (exibido como "N/D") e nunca é estimado ou zerado.
-As únicas contas feitas aqui são conversões diretas de dados da própria API
-(ex.: DPA = preço x DY; liquidez = volume médio x preço).
+dado, ele fica como NaN (exibido como "N/D") e nunca é estimado, copiado ou zerado.
+As únicas contas feitas aqui são conversões de unidade de dados da própria API:
+percentual -> fração, DPA = preço x DY e liquidez em R$ = volume médio x preço.
 """
 
 import re
@@ -17,7 +17,7 @@ import pandas as pd
 import requests
 
 URL_TRADINGVIEW = "https://scanner.tradingview.com/brazil/scan"
-URL_YAHOO = "https://query2.finance.yahoo.com/v8/finance/chart/{ticker}.SA"
+URL_YAHOO = "https://query2.finance.yahoo.com/v8/finance/chart/{simbolo}"   # ações: PETR4.SA; Ibovespa: ^BVSP
 CABECALHOS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 # Campos pedidos ao TradingView (todos com cobertura verificada para a B3).
@@ -76,25 +76,19 @@ def _percentual(valor):
 def _montar_acao(campos):
     """Transforma a resposta bruta de um ativo no registro usado pela plataforma."""
     preco = _numero(campos["close"])
-
-    # P/VP da API é exatamente preço / VPA; se o campo pronto faltar, aplica a mesma conta.
-    vpa = _numero(campos["book_value_per_share_fq"])
-    pvp = _numero(campos["price_book_fq"])
-    if np.isnan(pvp) and vpa and not np.isnan(vpa):
-        pvp = preco / vpa
-
     dy = _percentual(campos["dividends_yield_current"])
 
     return {
         "ticker": campos["name"],
         "nome": campos["description"] or campos["name"],
-        "setor": campos["sector"] or "Outros",
-        "industria": campos["industry"] or "Outros",
+        "setor": campos["sector"],          # ausente fica vazio: o Greenblatt exclui quem não tem setor
+        "industria": campos["industry"],
         "preco": preco,
+        # A API não envia P/L nem P/VP quando o lucro ou o patrimônio são negativos: ficam vazios
         "pl": _numero(campos["price_earnings_ttm"]),
-        "pvp": pvp,
+        "pvp": _numero(campos["price_book_fq"]),
         "lpa": _numero(campos["earnings_per_share_basic_ttm"]),
-        "vpa": vpa,
+        "vpa": _numero(campos["book_value_per_share_fq"]),
         "dy": dy,
         "dpa_12m": preco * dy,  # dividendos por ação nos últimos 12 meses (R$)
         "roe": _percentual(campos["return_on_equity"]),
@@ -155,20 +149,20 @@ def buscar_acoes_tradingview():
 # =============================================================================
 # YAHOO FINANCE: HISTÓRICO DE COTAÇÕES PARA O GRÁFICO
 # =============================================================================
-def buscar_cotacoes_yahoo(ticker, inicio_ts, fim_ts, intervalo):
+def buscar_cotacoes_yahoo(simbolo, inicio_ts, fim_ts, intervalo):
     """
     Busca candles (abertura, máxima, mínima, fechamento, volume) no Yahoo Finance.
 
     `inicio_ts` e `fim_ts` são timestamps Unix; `intervalo` é "1d" ou "1wk".
     Retorna um DataFrame com a coluna "date" (UTC) ou um DataFrame vazio.
     """
-    url = f"{URL_YAHOO.format(ticker=ticker)}?period1={int(inicio_ts)}&period2={int(fim_ts)}&interval={intervalo}"
+    url = f"{URL_YAHOO.format(simbolo=simbolo)}?period1={int(inicio_ts)}&period2={int(fim_ts)}&interval={intervalo}"
     try:
         resposta = requests.get(url, headers=CABECALHOS, timeout=10)
         resposta.raise_for_status()
         resultado = ((resposta.json().get("chart") or {}).get("result") or [None])[0]
     except Exception as erro:
-        print(f"🚨 [YAHOO] Falha ao buscar {ticker}: {erro}")
+        print(f"🚨 [YAHOO] Falha ao buscar {simbolo}: {erro}")
         return pd.DataFrame()
 
     if not resultado or not resultado.get("timestamp"):
@@ -197,9 +191,6 @@ def buscar_cotacoes_yahoo(ticker, inicio_ts, fim_ts, intervalo):
             and hora_preco.date() == df["date"].iloc[-1].date():
         df.loc[df.index[-1], "close"] = preco_atual
 
-    # Candles sem fechamento são descartados; sem abertura/máxima/mínima, o candle é desenhado só no fechamento
-    df = df.dropna(subset=["close"]).reset_index(drop=True)
-    for coluna in ("open", "high", "low"):
-        df[coluna] = df[coluna].fillna(df["close"])
-    df["volume"] = df["volume"].fillna(0)
-    return df
+    # Candles sem fechamento são descartados. Abertura, máxima, mínima e volume ausentes
+    # ficam vazios (o candle não é desenhado), sem copiar outro valor no lugar.
+    return df.dropna(subset=["close"]).reset_index(drop=True)
