@@ -1,451 +1,324 @@
-import os
+"""
+Servidor Flask do JMP Investimentos.
+
+Os dados ficam em memória. Ao subir, o servidor busca no TradingView e no banco
+(Supabase) ao mesmo tempo e usa o que chegar primeiro. Dados com mais de 5 minutos
+são atualizados em segundo plano, e cada coleta fica gravada no banco.
+
+Rotas:
+    GET /api/rankings          ranking por método e filtros (?data=AAAA-MM-DD só para backtesting)
+    GET /api/historico/periodo primeiro e último dia do histórico
+    GET /api/tickers           lista de tickers para a busca
+    GET /api/analise           ficha da empresa e gráfico técnico
+    GET /api/saude             verificação leve usada para manter o servidor acordado
+"""
+
+import threading
 import time
-import warnings
+from datetime import datetime, timedelta, timezone
+from urllib.parse import quote_plus
+
 import numpy as np
 import pandas as pd
-import requests
-from flask import Flask, jsonify, request
+from flask import Flask, abort, jsonify, request, send_from_directory
 from flask_cors import CORS
 
+import coleta
 import database
-
-# Desativa avisos desnecessários do Pandas/Numpy
-warnings.filterwarnings("ignore")
+import estrategias
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, expose_headers=["X-Data-Base"])   # o front na Vercel lê a data dos dados neste cabeçalho
 
-# Inicializa as tabelas no Supabase na inicialização
-database.inicializar_banco()
+IDADE_MAXIMA = timedelta(minutes=5)          # dado mais velho que isso é atualizado em segundo plano
+ARQUIVOS_PUBLICOS = {"index.html", "script.js", "style.css"}
 
-# Configuração de Segurança e Cache em RAM
-CRON_SECRET_KEY = os.getenv("CRON_SECRET_KEY", "jmp_secret_cron_2026")
-CACHE_RAM_TTL = 300  # Tempo de vida do cache em segundos (5 min)
-_CACHE_MEMORIA = {"df": None, "updated_at": 0}
+_cache = {"df": None}                       # dados atuais em memória (responde sem ir ao banco)
+_cache_historico = {}
+_tarefas = set()                             # atualizações em andamento (evita duplicadas)
+_lock = threading.Lock()
+_lock_primeira_carga = threading.Lock()
 
 
 # =============================================================================
-# HELPER FUNCTIONS (Funções Auxiliares)
+# AUXILIARES
 # =============================================================================
-def _converter_float(valor, padrao=0.0):
-    """Converte valores com segurança para float, evitando erros de parse."""
-    if valor is None or str(valor).strip() in ['', 'None', 'null', 'undefined']:
-        return float(padrao)
+def _numero(valor):
+    """float válido ou None (NaN/infinito/vazio viram None, para gerar JSON válido)."""
     try:
-        return float(valor)
-    except (ValueError, TypeError):
-        return float(padrao)
+        valor = float(valor)
+    except (TypeError, ValueError):
+        return None
+    return valor if np.isfinite(valor) else None
 
 
-def _limpar_lista(lista):
-    """Substitui valores nulos/NaN em listas por 0.0 para serialização JSON."""
-    return [float(x) if pd.notnull(x) else 0.0 for x in lista]
+def _para_json(df):
+    df = df.drop(columns=["updated_at", "data_coleta"], errors="ignore").replace([np.inf, -np.inf], np.nan)
+    return df.astype(object).where(df.notna(), None).to_dict(orient="records")
 
 
-# =============================================================================
-# 1. EXTRAÇÃO DE DADOS (TradingView Scanner)
-# =============================================================================
-def buscar_e_calcular_dados_tradingview():
-    """Obtém os dados financeiros da B3 via TradingView e calcula os indicadores."""
-    print("⏳ [TRADINGVIEW] A extrair e calcular dados da B3...")
-    
-    url_tv = "https://scanner.tradingview.com/brazil/scan"
-    cols = [
-        "name", "description", "close", "volume", "price_earnings_ttm",
-        "price_book_ratio", "dividend_yield_recent", "return_on_equity",
-        "return_on_invested_capital", "net_margin", "enterprise_value_ebitda_ttm",
-        "earnings_per_share_basic_ttm", "dps_common_stock_prim_issue_fy",
-        "total_revenue_growth_5y", "earnings_per_share_diluted_growth_ttm_yoy",
-        "total_equity", "total_debt"
-    ]
-    
-    payload = {
-        "markets": ["brazil"],
-        "filter": [{"left": "type", "operation": "equal", "right": "stock"}],
-        "columns": cols,
-        "sort": {"sortBy": "volume", "sortOrder": "desc"},
-        "range": [0, 500]
-    }
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        r = requests.post(url_tv, json=payload, headers=headers, timeout=25)
-        if r.status_code != 200:
-            print(f"🚨 [ERRO TV] Status {r.status_code}: {r.text}")
-            return pd.DataFrame()
-            
-        resultados = []
-        for item in r.json().get("data", []):
-            ticker_completo = item.get("s", "")
-            ticker = ticker_completo.split(":")[-1] if ":" in ticker_completo else ticker_completo
-            
-            # Filtra apenas tickers válidos de ações
-            if not (4 <= len(ticker) <= 6):
-                continue
-            
-            val = item.get("d", [])
-            if not val or len(val) < len(cols):
-                continue
-            
-            row = dict(zip(cols, val))
-            preco = _converter_float(row.get("close"))
-            
-            if preco <= 0.05:
-                continue
-
-            # Mapeamento e normalização dos indicadores
-            pl = _converter_float(row.get("price_earnings_ttm"))
-            pvp = _converter_float(row.get("price_book_ratio"))
-            dy = _converter_float(row.get("dividend_yield_recent")) / 100.0
-            roe = _converter_float(row.get("return_on_equity")) / 100.0
-            roic = _converter_float(row.get("return_on_invested_capital")) / 100.0
-            margem = _converter_float(row.get("net_margin")) / 100.0
-            evebit = _converter_float(row.get("enterprise_value_ebitda_ttm"))
-            lpa = _converter_float(row.get("earnings_per_share_basic_ttm"))
-            dpa_12m = _converter_float(row.get("dps_common_stock_prim_issue_fy"))
-            
-            # Ajuste de DPA e Dividend Yield caso um esteja ausente
-            if dpa_12m <= 0 < dy:
-                dpa_12m = preco * dy
-            elif dpa_12m > 0 >= dy:
-                dy = dpa_12m / preco
-                
-            # Cálculo de VPA e ajuste do LPA via P/L
-            vpa = (preco / pvp) if pvp > 0 else preco
-            if lpa <= 0 < pl:
-                lpa = preco / pl
-            
-            # Lógica de cálculo da taxa de crescimento
-            crescimento_5y = _converter_float(row.get("total_revenue_growth_5y"))
-            crescimento_yoy = _converter_float(row.get("earnings_per_share_diluted_growth_ttm_yoy"))
-            
-            if crescimento_5y != 0:
-                crescimento_bruto = crescimento_5y
-            elif crescimento_yoy != 0:
-                crescimento_bruto = crescimento_yoy
-            else:
-                crescimento_bruto = (roe * 100.0 * 0.5) if roe > 0 else 5.0
-                
-            patrimonio = _converter_float(row.get("total_equity"))
-            divida_total = _converter_float(row.get("total_debt"))
-
-            resultados.append({
-                "ticker": ticker,
-                "nome": row.get("description") or f"Cia {ticker}",
-                "preco": preco,
-                "pl": pl,
-                "pvp": pvp,
-                "lpa": lpa,
-                "vpa": vpa,
-                "dy": dy,
-                "dpa_12m": dpa_12m,
-                "roic": roic,
-                "roe": roe,
-                "margem": margem,
-                "evebit": evebit,
-                "crescimento": crescimento_bruto / 100.0,
-                "liquidez": _converter_float(row.get("volume")) * preco,
-                "patrimonio": patrimonio,
-                "divida_total": divida_total,
-                "divida_patrimonio": (divida_total / patrimonio) if patrimonio > 0 else 0.0
-            })
-            
-        df = pd.DataFrame(resultados)
-        return df.fillna(0) if not df.empty else pd.DataFrame()
-            
-    except Exception as e:
-        print(f"🚨 [ERRO CRÍTICO FETCH TV]: {e}")
-        return pd.DataFrame()
+def _montar_df(registros):
+    """DataFrame padronizado a partir do banco ou da coleta."""
+    df = pd.DataFrame(registros)
+    for coluna in database.COLUNAS:      # garante todas as colunas, mesmo em registros antigos
+        if coluna not in df:
+            df[coluna] = None
+    for coluna in database.COLUNAS_NUMERICAS:
+        df[coluna] = pd.to_numeric(df[coluna], errors="coerce")
+    df["logo"] = "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/" + df["ticker"].str[:4] + ".png"
+    return df
 
 
-# =============================================================================
-# 2. CAMADA DE CACHE HÍBRIDO (RAM + Supabase)
-# =============================================================================
-import threading
-
-# Controle do estado da atualização em segundo plano
-_ATUALIZANDO_EM_SEGUNDO_PLANO = False
-
-def _atualizar_dados_background():
-    """Roda a busca no TradingView e atualiza o Supabase em segundo plano."""
-    global _CACHE_MEMORIA, _ATUALIZANDO_EM_SEGUNDO_PLANO
-    try:
-        print("🔄 [BACKGROUND] Buscando dados atualizados do TradingView...")
-        df_novo = buscar_e_calcular_dados_tradingview()
-        if not df_novo.empty:
-            database.salvar_cache_acoes(df_novo)
-            
-            # Recarrega no cache de RAM com o dado novo
-            registros = database.ler_cache_acoes()
-            if registros:
-                df = pd.DataFrame(registros)
-                df['logo'] = df['ticker'].apply(lambda t: f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{t[:4]}.png")
-                if 'divida_patrimonio' not in df.columns:
-                    df['divida_patrimonio'] = np.where(df['patrimonio'] > 0, df['divida_total'] / df['patrimonio'], 0.0)
-                
-                _CACHE_MEMORIA["df"] = df
-                _CACHE_MEMORIA["updated_at"] = time.time()
-                print("✅ [BACKGROUND] Cache em RAM e Supabase atualizados com sucesso!")
-    except Exception as e:
-        print(f"🚨 [ERRO BACKGROUND UPDATE]: {e}")
-    finally:
-        _ATUALIZANDO_EM_SEGUNDO_PLANO = False
+def _ler_filtros(args):
+    """Parâmetro ausente = padrão da Tabela 3; parâmetro vazio = filtro desligado."""
+    return {chave: (padrao if chave not in args else _numero(args.get(chave)))
+            for chave, padrao in estrategias.FILTROS_PADRAO.items()}
 
 
-def obter_dados_base():
-    """Retorna instantaneamente o cache (RAM ou Supabase) e atualiza em segundo plano se expirado."""
-    global _CACHE_MEMORIA, _ATUALIZANDO_EM_SEGUNDO_PLANO
-    agora = time.time()
-
-    # 1. Se o cache em RAM for recente (< 5 min), retorna na hora (< 5ms)
-    if _CACHE_MEMORIA["df"] is not None and (agora - _CACHE_MEMORIA["updated_at"]) < CACHE_RAM_TTL:
-        return _CACHE_MEMORIA["df"].copy()
-
-    # 2. Se a RAM expirou, lê imediatamente o último dado salvo no Supabase
-    registros = database.ler_cache_acoes()
-    
-    if registros:
-        df = pd.DataFrame(registros)
-        df['logo'] = df['ticker'].apply(lambda t: f"https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/{t[:4]}.png")
-        if 'divida_patrimonio' not in df.columns:
-            df['divida_patrimonio'] = np.where(df['patrimonio'] > 0, df['divida_total'] / df['patrimonio'], 0.0)
-            
-        _CACHE_MEMORIA["df"] = df
-        _CACHE_MEMORIA["updated_at"] = agora
-
-        # Dispara atualização em background se não houver outra em andamento
-        if not _ATUALIZANDO_EM_SEGUNDO_PLANO:
-            _ATUALIZANDO_EM_SEGUNDO_PLANO = True
-            threading.Thread(target=_atualizar_dados_background, daemon=True).start()
-
-        # Retorna o dado do banco IMEDIATAMENTE sem esperar o TradingView
-        return df.copy()
-
-    # 3. Fallback (apenas se o Supabase estiver 100% vazio na 1ª vez)
-    print("⚠️ [BANCO VAZIO] Realizando sincronização primária síncrona...")
-    df_novo = buscar_e_calcular_dados_tradingview()
-    if not df_novo.empty:
-        database.salvar_cache_acoes(df_novo)
-        return obter_dados_base()
-        
-    return pd.DataFrame()
+def _desatualizado(momento):
+    """True se o dado não tem data, é velho ou está no futuro (gravado em outro fuso)."""
+    if momento is None or pd.isna(momento):
+        return True
+    idade = database.agora_b3() - momento
+    return idade > IDADE_MAXIMA or idade < -IDADE_MAXIMA
 
 
-# =============================================================================
-# 3. ROTAS DA API
-# =============================================================================
-@app.route('/api/tickers', methods=['GET'])
-def get_tickers():
-    """Retorna a lista ordenada dos tickers disponíveis com sufixo da B3 (.SA)."""
-    df = obter_dados_base()
-    if df.empty:
-        return jsonify([])
-    return jsonify(sorted((df['ticker'] + ".SA").tolist()))
+def _em_segundo_plano(chave, funcao, *args):
+    """Roda `funcao` em outra thread, uma vez por chave."""
+    with _lock:
+        if chave in _tarefas:
+            return
+        _tarefas.add(chave)
 
-
-@app.route('/api/rankings', methods=['GET'])
-def get_rankings():
-    """Aplica os filtros dinâmicos e calcula as metodologias de valuation."""
-    df = obter_dados_base()
-    if df.empty:
-        return jsonify([])
-
-    # Leitura dos filtros de parâmetros da requisição
-    metodo = request.args.get('metodo', 'graham')
-    liq_min = _converter_float(request.args.get('liq_min'), 100000)
-    pl_max = _converter_float(request.args.get('pl_max'), 30)
-    pvp_max = _converter_float(request.args.get('pvp_max'), 3)
-    divida_max = _converter_float(request.args.get('divida_max'), 3.0)
-    
-    dy_min = _converter_float(request.args.get('dy_min'), 0) / 100.0
-    roe_min = _converter_float(request.args.get('roe_min'), 0) / 100.0
-    roic_min = _converter_float(request.args.get('roic_min'), 0) / 100.0
-    margem_min = _converter_float(request.args.get('margem_min'), 0) / 100.0
-    cagr_min = _converter_float(request.args.get('cagr_min'), 0) / 100.0
-
-    # Aplicação de filtros
-    mask = (df['liquidez'] >= liq_min)
-    if pl_max > 0: 
-        mask &= (df['pl'] <= pl_max) & (df['pl'] > 0)
-    if pvp_max > 0: 
-        mask &= (df['pvp'] <= pvp_max) & (df['pvp'] > 0)
-    if divida_max > 0: 
-        mask &= (df['divida_patrimonio'] <= divida_max)
-    
-    mask &= (df['dy'] >= dy_min) & (df['roe'] >= roe_min) & (df['roic'] >= roic_min)
-    mask &= (df['margem'] >= margem_min) & (df['crescimento'] >= cagr_min)
-
-    df = df[mask].copy().replace([np.inf, -np.inf], np.nan).fillna(0)
-    if df.empty:
-        return jsonify([])
-
-    # Metodologias de Valuation
-    if metodo == "graham":
-        df = df[(df['lpa'] > 0) & (df['vpa'] > 0)].copy()
-        if df.empty: return jsonify([])
-        df['valor_justo'] = np.sqrt(22.5 * df['lpa'] * df['vpa'])
-        df['potencial'] = (df['valor_justo'] - df['preco']) / df['preco']
-        df = df.sort_values(by='potencial', ascending=False)
-
-    elif metodo == "bazin":
-        df = df[df['dy'] > 0].copy()
-        if df.empty: return jsonify([])
-        df['preco_teto'] = df['dpa_12m'] / 0.06
-        df['potencial'] = (df['preco_teto'] - df['preco']) / df['preco']
-        df = df.sort_values(by='potencial', ascending=False)
-
-    elif metodo == "greenblatt":
-        df_m = df[(df['evebit'] > 0) & (df['roic'] > 0)].copy()
-        if df_m.empty: return jsonify([])
-        rank_roic = df_m['roic'].rank(ascending=False, method='min')
-        rank_evebit = df_m['evebit'].rank(ascending=True, method='min')
-        df_m['score'] = rank_roic + rank_evebit
-        df = df_m.sort_values(by='score', ascending=True)
-        df['potencial'] = df['score']
-
-    elif metodo == "lynch":
-        df_l = df[(df['pl'] > 0) & (df['crescimento'] > 0)].copy()
-        if df_l.empty: return jsonify([])
-        df_l['peg_ratio'] = df_l['pl'] / (df_l['crescimento'] * 100.0)
-        df = df_l.sort_values(by='peg_ratio', ascending=True)
-        df['potencial'] = df['crescimento']
-
-    df = df.reset_index(drop=True)
-    df['rank'] = df.index + 1
-
-    return jsonify(df.to_dict(orient='records'))
-
-
-@app.route('/api/analise', methods=['GET'])
-def get_analise_completa():
-    """Retorna a análise detalhada e o histórico do gráfico para um ativo específico."""
-    ticker_input = request.args.get('ticker', '').upper().strip().replace('.SA', '')
-    if not ticker_input:
-        return jsonify({"error": "Nenhum ativo selecionado."})
-    
-    df_base = obter_dados_base()
-    if df_base.empty:
-        return jsonify({"error": "Servidor temporariamente indisponível."})
-        
-    empresa_data = df_base[df_base['ticker'] == ticker_input]
-    if empresa_data.empty:
-        return jsonify({"error": f"Ativo {ticker_input} não encontrado na base."})
-        
-    item = empresa_data.iloc[0].replace([np.inf, -np.inf], np.nan).fillna(0)
-
-    # Dicionário de fundamentos da empresa
-    fundamentos_dict = {
-        "preco": float(item['preco']), "pl": float(item['pl']), "pvp": float(item['pvp']),
-        "lpa": float(item['lpa']), "vpa": float(item['vpa']), "dy": float(item['dy']),
-        "dpa_12m": float(item['dpa_12m']), "roic": float(item['roic']), "roe": float(item['roe']),
-        "margem": float(item['margem']), "evebit": float(item['evebit']), "crescimento": float(item['crescimento']),
-        "liquidez": float(item['liquidez']), "patrimonio": float(item.get('patrimonio', 0)),
-        "divida_patrimonio": float(item.get('divida_patrimonio', 0)),
-        "links": {
-            "site_ri": f"https://www.google.com/search?q=RI+Relações+com+Investidores+{item['nome']}",
-            "relatorio_oficial": f"https://br.tradingview.com/symbols/BMFBOVESPA-{ticker_input}/"
-        }
-    }
-
-    # Configuração do histórico via Yahoo Finance
-    periodo_solicitado = request.args.get('periodo', '1 Ano')
-    p_map = {"30 Dias": "1mo", "6 Meses": "6mo", "1 Ano": "1y", "5 Anos": "5y", "10 Anos": "10y"}
-    range_api = p_map.get(periodo_solicitado, "1y")
-    intervalo_api = "1wk" if range_api in ["5y", "10y"] else "1d"
-
-    chart_data = None
-    try:
-        url_yahoo = f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker_input}.SA?range={range_api}&interval={intervalo_api}"
-        headers_yahoo = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        
-        r_yahoo = requests.get(url_yahoo, headers=headers_yahoo, timeout=10)
-        if r_yahoo.status_code == 200:
-            res = r_yahoo.json().get("chart", {}).get("result", [])
-            if res:
-                data = res[0]
-                timestamps = data.get("timestamp", [])
-                quote = data.get("indicators", {}).get("quote", [{}])[0]
-                
-                df_chart = pd.DataFrame({
-                    "date": pd.to_datetime(timestamps, unit="s").strftime("%Y-%m-%d"),
-                    "open": quote.get("open", []),
-                    "high": quote.get("high", []),
-                    "low": quote.get("low", []),
-                    "close": quote.get("close", []),
-                    "volume": quote.get("volume", [])
-                }).ffill().bfill()
-                
-                # Cálculo de Indicadores Técnicos (RSI, MA50, MA200)
-                series_close = df_chart['close']
-                delta = series_close.diff()
-                
-                gain = delta.where(delta > 0, 0).rolling(window=min(14, len(series_close))).mean()
-                loss = -delta.where(delta < 0, 0).rolling(window=min(14, len(series_close))).mean()
-                rs = gain / loss.replace(0, np.nan)
-                
-                rsi = (100 - (100 / (1 + rs))).fillna(50).tolist()
-                ma50 = series_close.rolling(window=min(50, len(series_close))).mean().bfill().tolist()
-                ma200 = series_close.rolling(window=min(200, len(series_close))).mean().bfill().tolist()
-
-                chart_data = {
-                    "dates": df_chart['date'].tolist(),
-                    "open": _limpar_lista(df_chart['open']),
-                    "high": _limpar_lista(df_chart['high']),
-                    "low": _limpar_lista(df_chart['low']),
-                    "close": _limpar_lista(df_chart['close']),
-                    "volume": _limpar_lista(df_chart['volume']),
-                    "rsi": _limpar_lista(rsi),
-                    "ma50": _limpar_lista(ma50),
-                    "ma200": _limpar_lista(ma200)
-                }
-    except Exception as e:
-        print(f"🚨 [ERRO NO GRÁFICO] {ticker_input}: {e}")
-
-    return jsonify({
-        "ticker": ticker_input,
-        "nome": item['nome'],
-        "logo": item['logo'],
-        "fundamentos": fundamentos_dict,
-        "chart_data": chart_data
-    })
-
-
-# =============================================================================
-# 4. CRON JOB (Atualização em Segundo Plano)
-# =============================================================================
-@app.route('/api/cron/update', methods=['GET', 'POST'])
-def executar_cron_update():
-    """Rota para ser chamada periodicamente por rotinas automatizadas (ex: GitHub Actions)."""
-    global _CACHE_MEMORIA
-    chave_requisicao = request.args.get('key') or request.headers.get('X-Cron-Key')
-    
-    if chave_requisicao != CRON_SECRET_KEY:
-        return jsonify({"error": "Acesso não autorizado."}), 403
-
-    df_novo = buscar_e_calcular_dados_tradingview()
-    if not df_novo.empty:
-        # Atualiza a base persistente e invalida a RAM para forçar novos dados
-        database.salvar_cache_acoes(df_novo)
-        _CACHE_MEMORIA["df"] = None
-        _CACHE_MEMORIA["updated_at"] = 0
-        
+    def tarefa():
         try:
-            database.salvar_historico_ranking(df_novo, "cron_update_geral")
-        except Exception as e:
-            print(f"🚨 [ERRO HISTÓRICO CRON]: {e}")
+            funcao(*args)
+        except Exception as erro:
+            print(f"🚨 [ATUALIZAÇÃO] {chave}: {erro}")
+        finally:
+            _tarefas.discard(chave)
 
-        return jsonify({
-            "status": "sucesso", 
-            "total_acoes": len(df_novo), 
-            "mensagem": "Cache e Histórico Supabase atualizados com sucesso!"
-        })
-        
-    return jsonify({"status": "erro", "mensagem": "Falha ao obter dados do TradingView."}), 500
+    threading.Thread(target=tarefa, daemon=True).start()
 
 
-if __name__ == '__main__':
+# =============================================================================
+# DADOS DAS AÇÕES
+# =============================================================================
+def _coletar_acoes():
+    """Coleta no TradingView, atualiza a memória e depois grava no banco."""
+    bruto = coleta.buscar_acoes_tradingview()
+    if bruto.empty:
+        return None
+    df = _montar_df(bruto.to_dict(orient="records"))
+    df["updated_at"] = database.agora_b3()
+    _cache["df"] = df   # memória primeiro: quem espera recebe na hora
+    database.salvar_coleta(bruto)
+    return df
+
+
+def _carregar_do_banco():
+    """Usa a última coleta salva, se a memória ainda estiver vazia (o TradingView não chegou antes)."""
+    registros = database.ler_cache()
+    if registros and _cache["df"] is None:
+        _cache["df"] = _montar_df(registros)
+
+
+def _primeira_carga(limite_segundos=60):
+    """
+    Servidor recém-iniciado: busca no TradingView e no banco ao mesmo tempo e
+    responde com o primeiro que chegar. Medido: TradingView ~0,9 s; banco ~2,8 s
+    (conexão nova). O banco serve de reserva se o TradingView falhar.
+    """
+    pronto = threading.Event()
+    terminadas = []
+
+    def executar(funcao):
+        try:
+            funcao()
+        except Exception as erro:
+            print(f"🚨 [PRIMEIRA CARGA] {funcao.__name__}: {erro}")
+        terminadas.append(funcao)
+        if _cache["df"] is not None or len(terminadas) == 2:
+            pronto.set()
+
+    for funcao in (_coletar_acoes, _carregar_do_banco):
+        threading.Thread(target=executar, args=(funcao,), daemon=True).start()
+    pronto.wait(limite_segundos)
+
+
+def dados_atuais():
+    """Últimos dados em memória; se estiverem velhos, atualiza em segundo plano."""
+    if _cache["df"] is None:
+        with _lock_primeira_carga:          # vários acessos ao mesmo tempo disparam uma só carga
+            if _cache["df"] is None:
+                _primeira_carga()
+
+    df = _cache["df"]
+    if df is None:
+        return None
+    if _desatualizado(df["updated_at"].max()) or df["industria"].isna().all():
+        _em_segundo_plano("acoes", _coletar_acoes)
+    return df
+
+
+def dados_historicos(data_ref):
+    """(DataFrame, dia usado) do último pregão coletado até `data_ref` (backtesting)."""
+    if data_ref not in _cache_historico:
+        registros, dia = database.ler_historico(data_ref)
+        resultado = (_montar_df(registros) if registros else pd.DataFrame(), dia)
+        if dia is None or data_ref >= database.agora_b3().date():
+            return resultado             # hoje ainda pode mudar: não guarda
+        _cache_historico[data_ref] = resultado
+    return _cache_historico[data_ref]
+
+
+database.inicializar_banco()
+threading.Thread(target=dados_atuais, daemon=True).start()   # pré-carrega ao subir o servidor
+
+
+# =============================================================================
+# ROTAS
+# =============================================================================
+@app.route("/")
+def home():
+    return send_from_directory(".", "index.html")
+
+
+@app.route("/<path:arquivo>")
+def arquivos(arquivo):
+    if arquivo not in ARQUIVOS_PUBLICOS:   # nunca expõe código, .env ou .git
+        abort(404)
+    return send_from_directory(".", arquivo)
+
+
+@app.route("/api/rankings")
+def rankings():
+    metodo = request.args.get("metodo", "graham")
+    if metodo not in estrategias.METODOS:
+        return jsonify({"error": f"Método '{metodo}' desconhecido."}), 400
+
+    data_texto = (request.args.get("data") or "").strip()
+    if data_texto:   # modo backtesting: usa somente dados coletados até a data
+        try:
+            data_ref = datetime.strptime(data_texto, "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "Data inválida. Use o formato AAAA-MM-DD."}), 400
+        if data_ref > database.agora_b3().date():
+            return jsonify({"error": "A data de referência não pode estar no futuro."}), 400
+        df, dia = dados_historicos(data_ref)
+        if dia is None:
+            inicio, _ = database.periodo_historico()
+            if inicio:
+                msg = f"Não há coleta completa até {data_ref:%d/%m/%Y}. O histórico começa em {inicio:%d/%m/%Y}."
+            else:
+                msg = "O histórico completo ainda está vazio: as coletas diárias começam a ser gravadas a partir da implantação desta versão."
+            return jsonify({"error": msg}), 404
+        data_base = dia.isoformat()
+    else:
+        df = dados_atuais()
+        if df is None or df.empty:
+            return jsonify([])
+        data_base = pd.to_datetime(df["updated_at"]).max().strftime("%Y-%m-%dT%H:%M")
+
+    resposta = jsonify(_para_json(estrategias.ranquear(df, metodo, _ler_filtros(request.args))))
+    resposta.headers["X-Data-Base"] = data_base
+    return resposta
+
+
+@app.route("/api/historico/periodo")
+def historico_periodo():
+    inicio, fim = database.periodo_historico()
+    return jsonify({"inicio": inicio and inicio.isoformat(), "fim": fim and fim.isoformat()})
+
+
+@app.route("/api/saude")
+def saude():
+    """Rota leve para o monitoramento manter o servidor acordado (não consulta APIs nem banco)."""
+    return jsonify({"status": "ok", "dados_em_memoria": _cache["df"] is not None})
+
+
+@app.route("/api/tickers")
+def tickers():
+    df = dados_atuais()
+    return jsonify([] if df is None else sorted(df["ticker"] + ".SA"))
+
+
+# =============================================================================
+# ANÁLISE DETALHADA
+# =============================================================================
+# Período -> (dias exibidos, gráfico semanal?)
+PERIODOS = {"30 Dias": (31, False), "6 Meses": (183, False), "1 Ano": (366, False),
+            "5 Anos": (1827, True), "10 Anos": (3653, True)}
+
+
+def montar_grafico(ticker, periodo):
+    """
+    Busca as cotações no Yahoo Finance e calcula os indicadores técnicos:
+    IFR(14) de Wilder e médias móveis de 50 e 200 pregões (10 e 40 semanas no semanal).
+    Busca 300 dias a mais para os indicadores já começarem calculados no 1º dia exibido.
+    """
+    dias, semanal = PERIODOS.get(periodo, PERIODOS["1 Ano"])
+    agora = time.time()
+    df = coleta.buscar_cotacoes_yahoo(ticker, agora - (dias + 300) * 86400, agora, "1wk" if semanal else "1d")
+    if df.empty:
+        return None
+
+    variacao = df["close"].diff()
+    ganho = variacao.clip(lower=0).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+    perda = (-variacao.clip(upper=0)).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
+    df["rsi"] = (100 - 100 / (1 + ganho / perda)).where(perda > 0, 100.0).where(ganho.notna())
+
+    curta, longa = (10, 40) if semanal else (50, 200)
+    df["ma50"] = df["close"].rolling(curta).mean()
+    df["ma200"] = df["close"].rolling(longa).mean()
+
+    inicio = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=dias)
+    df = df[df["date"] >= inicio]
+    if df.empty:
+        return None
+    colunas = ("open", "high", "low", "close", "volume", "rsi", "ma50", "ma200")
+    return {"dates": df["date"].dt.strftime("%Y-%m-%d").tolist(),
+            **{c: [_numero(v) for v in df[c]] for c in colunas}}
+
+
+def _atualizar_grafico(ticker, periodo):
+    grafico = montar_grafico(ticker, periodo)
+    if grafico:
+        database.salvar_grafico(ticker, periodo, grafico)
+    return grafico
+
+
+@app.route("/api/analise")
+def analise():
+    ticker = request.args.get("ticker", "").upper().strip().replace(".SA", "")
+    periodo = request.args.get("periodo", "1 Ano")
+    periodo = periodo if periodo in PERIODOS else "1 Ano"
+    if not ticker:
+        return jsonify({"error": "Nenhum ativo selecionado."})
+
+    df = dados_atuais()
+    empresa = None if df is None else df[df["ticker"] == ticker]
+    if empresa is None or empresa.empty:
+        return jsonify({"error": f"Ativo {ticker} não encontrado na base."})
+    item = empresa.iloc[0]
+
+    fundamentos = {c: _numero(item[c]) for c in database.COLUNAS_NUMERICAS}
+    fundamentos["links"] = {
+        "site_ri": "https://www.google.com/search?q=" + quote_plus(f"RI Relações com Investidores {item['nome']}"),
+        "relatorio_oficial": f"https://br.tradingview.com/symbols/BMFBOVESPA-{ticker}/",
+    }
+
+    # Gráfico: último salvo no banco na hora; atualização em segundo plano se estiver velho
+    grafico, atualizado_em = database.ler_grafico(ticker, periodo)
+    if grafico is None:
+        grafico = _atualizar_grafico(ticker, periodo)
+    elif _desatualizado(atualizado_em):
+        _em_segundo_plano(f"grafico:{ticker}:{periodo}", _atualizar_grafico, ticker, periodo)
+
+    return jsonify({"ticker": ticker, "nome": item["nome"], "setor": item["setor"], "logo": item["logo"],
+                    "fundamentos": fundamentos, "chart_data": grafico})
+
+
+
+if __name__ == "__main__":
     app.run(debug=True, port=5000)

@@ -1,224 +1,334 @@
+"""
+Camada de persistência no PostgreSQL (Supabase).
+
+Tabelas:
+    acoes_cache      Último snapshot de cada ação (1 linha por ticker). É o que a
+                     plataforma exibe no dia a dia.
+    historico_acoes  Um snapshot por dia de coleta (o último do dia), usado para
+                     consultas retroativas e para o backtesting da monografia.
+    graficos_cache   Último gráfico consultado de cada ação e período, para a
+                     tela de análise abrir na hora.
+
+A conexão vem exclusivamente da variável de ambiente DATABASE_URL
+(no desenvolvimento local, pode ser definida em um arquivo .env).
+"""
+
+import math
 import os
+import threading
+from contextlib import contextmanager
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import psycopg2
-from psycopg2.extras import RealDictCursor, execute_values
+from psycopg2 import pool as pg_pool
+from psycopg2.extras import Json, RealDictCursor, execute_values
 
-# URL Padrão e de Ambiente para Conexão com o Supabase
-URL_PADRAO = "postgresql://postgres:HB6C8pfwOpotari7@db.mhyeccidsziqeqvsmryj.supabase.co:5432/postgres"
-URL_BANCO_NUVEM = os.getenv("DATABASE_URL", URL_PADRAO)
+try:
+    from dotenv import load_dotenv  # opcional, só para desenvolvimento local
+    load_dotenv()
+except ImportError:
+    pass
 
-# Conexão Global Persistente em Memória RAM
-_CONEXAO_PERSISTENTE = None
+
+URL_BANCO = os.getenv("DATABASE_URL")
+FUSO_B3 = ZoneInfo("America/Sao_Paulo")
+
+# Colunas gravadas nas duas tabelas (a ordem importa para os INSERTs).
+COLUNAS_TEXTO = ["ticker", "nome", "setor", "industria"]
+COLUNAS_NUMERICAS = [
+    "preco", "pl", "pvp", "dy", "roic", "roe", "margem", "crescimento", "liquidez",
+    "lpa", "vpa", "dpa_12m", "evebit", "patrimonio", "divida_total", "divida_patrimonio",
+]
+COLUNAS = COLUNAS_TEXTO + COLUNAS_NUMERICAS
+
+# Uma coleta com menos ações que isso é tratada como parcial (falha da API) e
+# não remove do cache as ações que ficaram de fora.
+MINIMO_ACOES_COLETA_COMPLETA = 200
+
+_pool = None
+_pool_lock = threading.Lock()
+
+
+def agora_b3():
+    """Data/hora atual no fuso da B3, sem tzinfo (formato gravado no banco)."""
+    return datetime.now(FUSO_B3).replace(tzinfo=None)
 
 
 # =============================================================================
-# HELPER FUNCTIONS & GERENCIAMENTO DE CONEXÃO
+# CONEXÃO (pool seguro para várias threads)
 # =============================================================================
-def obter_conexao():
-    """Reutiliza a conexão com o PostgreSQL para evitar o overhead de SSL/TCP handshake."""
-    global _CONEXAO_PERSISTENTE
+def _obter_pool():
+    """Cria o pool de conexões na primeira chamada e o reutiliza depois."""
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                if not URL_BANCO:
+                    raise RuntimeError("Variável de ambiente DATABASE_URL não configurada.")
+                _pool = pg_pool.ThreadedConnectionPool(1, 5, URL_BANCO, connect_timeout=10)
+    return _pool
+
+
+@contextmanager
+def _transacao(dict_cursor=False):
+    """
+    Entrega um cursor dentro de uma transação exclusiva da thread atual.
+
+    Commit no sucesso, rollback em erro. Conexões quebradas (o pooler do
+    Supabase encerra conexões ociosas) são descartadas em vez de voltar ao pool.
+    """
+    pool = _obter_pool()
+    conexao = pool.getconn()
+    descartar = False
     try:
-        if _CONEXAO_PERSISTENTE is None or _CONEXAO_PERSISTENTE.closed != 0:
-            _CONEXAO_PERSISTENTE = psycopg2.connect(URL_BANCO_NUVEM, connect_timeout=5)
-        return _CONEXAO_PERSISTENTE
-    except Exception as e:
-        print(f"🚨 [ERRO CONEXÃO POSTGRES]: {e}")
-        return psycopg2.connect(URL_BANCO_NUVEM, connect_timeout=5)
+        if conexao.closed:
+            raise psycopg2.InterfaceError("conexão fechada")
+        fabrica = RealDictCursor if dict_cursor else None
+        with conexao.cursor(cursor_factory=fabrica) as cursor:
+            yield cursor
+        conexao.commit()
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        descartar = True
+        raise
+    except Exception:
+        try:
+            conexao.rollback()
+        except Exception:
+            descartar = True
+        raise
+    finally:
+        pool.putconn(conexao, close=descartar or bool(conexao.closed))
 
 
-def _extrair_campos_df(row):
-    """Extrai e sanitiza os campos de uma linha do DataFrame para inserção no banco."""
-    return (
-        str(row.get('ticker', '')),
-        str(row.get('nome', '')),
-        float(row.get('preco', 0)),
-        float(row.get('pl', 0)),
-        float(row.get('pvp', 0)),
-        float(row.get('dy', 0)),
-        float(row.get('roic', 0)),
-        float(row.get('roe', 0)),
-        float(row.get('margem', 0)),
-        float(row.get('crescimento', 0)),
-        float(row.get('liquidez', 0)),
-        float(row.get('lpa', 0)),
-        float(row.get('vpa', 0)),
-        float(row.get('dpa_12m', 0)),
-        float(row.get('evebit', 0)),
-        float(row.get('patrimonio', 0)),
-        float(row.get('divida_total', 0)),
-    )
+def _executar(funcao, dict_cursor=False):
+    """Executa `funcao(cursor)`; se a conexão estiver morta, tenta mais uma vez."""
+    for tentativa in range(2):
+        try:
+            with _transacao(dict_cursor) as cursor:
+                return funcao(cursor)
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            if tentativa == 1:
+                raise
+
+
+def _consultar(sql, parametros=None):
+    """Executa um SELECT e devolve a lista de linhas como dicionários."""
+    def _buscar(cursor):
+        cursor.execute(sql, parametros)
+        return cursor.fetchall()
+    return _executar(_buscar, dict_cursor=True) or []
+
+
+def _numero_ou_null(valor):
+    """Converte para float; NaN, infinito e None viram NULL no banco."""
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        return None
+    return numero if math.isfinite(numero) else None
+
+
+def _linha_para_tupla(linha):
+    """Converte uma linha do DataFrame na tupla de valores esperada pelos INSERTs."""
+    textos = tuple(None if linha.get(c) is None else str(linha.get(c)) for c in COLUNAS_TEXTO)
+    numeros = tuple(_numero_ou_null(linha.get(c)) for c in COLUNAS_NUMERICAS)
+    return textos + numeros
 
 
 # =============================================================================
-# INICIALIZAÇÃO DE TABELAS
+# CRIAÇÃO E MIGRAÇÃO DAS TABELAS
 # =============================================================================
 def inicializar_banco():
-    """Garante a criação das tabelas 'historico_acoes' e 'acoes_cache' no Supabase."""
-    query_historico = '''
-        CREATE TABLE IF NOT EXISTS historico_acoes (
-            id SERIAL PRIMARY KEY,
-            data_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            ticker VARCHAR(10) NOT NULL,
-            nome_empresa VARCHAR(150),
-            preco REAL,
-            pl REAL,
-            pvp REAL,
-            dy REAL,
-            roic REAL,
-            roe REAL,
-            margem REAL,
-            crescimento REAL,
-            liquidez REAL,
-            metodo_ranking VARCHAR(50),
-            posicao_ranking INTEGER
-        );
-    '''
+    """
+    Cria as tabelas e migra versões antigas para o schema atual.
 
-    query_cache = '''
+    `CREATE TABLE IF NOT EXISTS` não altera tabelas já existentes, por isso
+    cada coluna também é adicionada com `ADD COLUMN IF NOT EXISTS`.
+    """
+    def _definicao(coluna):
+        return f"{coluna} VARCHAR(150)" if coluna in COLUNAS_TEXTO else f"{coluna} REAL"
+
+    adicionar = "\n".join(
+        f"ALTER TABLE {tabela} ADD COLUMN IF NOT EXISTS {_definicao(c)};"
+        for tabela in ("acoes_cache", "historico_acoes")
+        for c in COLUNAS[1:]
+    )
+
+    sql = f"""
         CREATE TABLE IF NOT EXISTS acoes_cache (
             ticker VARCHAR(10) PRIMARY KEY,
-            nome VARCHAR(150),
-            preco REAL,
-            pl REAL,
-            pvp REAL,
-            dy REAL,
-            roic REAL,
-            roe REAL,
-            margem REAL,
-            crescimento REAL,
-            liquidez REAL,
-            lpa REAL,
-            vpa REAL,
-            dpa_12m REAL,
-            evebit REAL,
-            patrimonio REAL,
-            divida_total REAL,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-    '''
+        CREATE TABLE IF NOT EXISTS historico_acoes (
+            id SERIAL PRIMARY KEY,
+            ticker VARCHAR(10) NOT NULL,
+            data_coleta TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS graficos_cache (
+            ticker VARCHAR(10) NOT NULL,
+            periodo VARCHAR(20) NOT NULL,
+            dados JSONB NOT NULL,
+            updated_at TIMESTAMP NOT NULL,
+            PRIMARY KEY (ticker, periodo)
+        );
+        ALTER TABLE acoes_cache ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        ALTER TABLE historico_acoes ADD COLUMN IF NOT EXISTS data_coleta TIMESTAMP;
+        {adicionar}
 
+        -- Migra dados do schema antigo (data_registro / nome_empresa), se existir
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'historico_acoes' AND column_name = 'data_registro') THEN
+                UPDATE historico_acoes SET data_coleta = data_registro WHERE data_coleta IS NULL;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'historico_acoes' AND column_name = 'nome_empresa') THEN
+                UPDATE historico_acoes SET nome = nome_empresa WHERE nome IS NULL;
+            END IF;
+        END $$;
+
+        ALTER TABLE historico_acoes ALTER COLUMN data_coleta SET DEFAULT CURRENT_TIMESTAMP;
+        CREATE INDEX IF NOT EXISTS idx_historico_data ON historico_acoes (data_coleta DESC);
+        CREATE INDEX IF NOT EXISTS idx_historico_ticker_data ON historico_acoes (ticker, data_coleta DESC);
+    """
     try:
-        conexao = obter_conexao()
-        with conexao.cursor() as cursor:
-            cursor.execute(query_historico)
-            cursor.execute(query_cache)
-        conexao.commit()
-        print("✅ [POSTGRES] Tabelas 'historico_acoes' e 'acoes_cache' prontas no Supabase!")
-    except Exception as e:
-        print(f"🚨 [ERRO INICIALIZAR BANCO]: {e}")
+        _executar(lambda cursor: cursor.execute(sql))
+        print("✅ [BANCO] Tabelas prontas no Supabase.")
+    except Exception as erro:
+        print(f"🚨 [BANCO] Erro ao inicializar tabelas: {erro}")
 
 
 # =============================================================================
-# GRAVAÇÃO E PERSISTÊNCIA DE DADOS
+# GRAVAÇÃO
 # =============================================================================
-def salvar_historico_ranking(df_ranqueado, metodo):
-    """Insere o snapshot do ranking atual na tabela de histórico."""
-    if df_ranqueado.empty:
+def salvar_coleta(df):
+    """
+    Grava uma coleta completa do TradingView em uma única transação:
+
+    1. Atualiza `acoes_cache` (UPSERT por ticker) e remove ações que saíram
+       da coleta (deslistadas, fracionárias antigas etc.).
+    2. Substitui o snapshot do dia em `historico_acoes`, mantendo apenas o
+       último do dia (a tabela cresce ~1 coleta por dia, não por atualização).
+
+    Retorna True se gravou com sucesso.
+    """
+    if df.empty:
         return False
-        
-    query = '''
-        INSERT INTO historico_acoes (
-            data_registro, ticker, nome_empresa, preco, pl, pvp, 
-            dy, roic, roe, margem, crescimento, liquidez, 
-            metodo_ranking, posicao_ranking
-        ) VALUES %s
-    '''
-    
-    try:
-        conexao = obter_conexao()
-        data_hoje = datetime.now()
-        
-        dados_lote = []
-        for _, row in df_ranqueado.iterrows():
-            dados_lote.append((
-                data_hoje,
-                str(row.get('ticker', '')),
-                str(row.get('nome', '')),
-                float(row.get('preco', 0)),
-                float(row.get('pl', 0)),
-                float(row.get('pvp', 0)),
-                float(row.get('dy', 0)),
-                float(row.get('roic', 0)),
-                float(row.get('roe', 0)),
-                float(row.get('margem', 0)),
-                float(row.get('crescimento', 0)),
-                float(row.get('liquidez', 0)),
-                metodo,
-                int(row.get('rank', 0))
-            ))
 
-        with conexao.cursor() as cursor:
-            execute_values(cursor, query, dados_lote)
-        conexao.commit()
-        
-        print(f"💾 [NUVEM] {len(df_ranqueado)} registros salvos no histórico ('{metodo}').")
+    lista_colunas = ", ".join(COLUNAS)
+    atualizacoes = ", ".join(f"{c} = EXCLUDED.{c}" for c in COLUNAS[1:])
+    sql_cache = f"""
+        INSERT INTO acoes_cache ({lista_colunas}, updated_at) VALUES %s
+        ON CONFLICT (ticker) DO UPDATE SET {atualizacoes}, updated_at = EXCLUDED.updated_at;
+    """
+    sql_remover_antigas = "DELETE FROM acoes_cache WHERE NOT (ticker = ANY(%s));"
+    sql_limpar_dia = """
+        DELETE FROM historico_acoes
+        WHERE data_coleta >= %s::date AND data_coleta < (%s::date + 1);
+    """
+    sql_historico = f"INSERT INTO historico_acoes ({lista_colunas}, data_coleta) VALUES %s;"
+
+    momento = agora_b3()
+    linhas = [_linha_para_tupla(linha) + (momento,) for linha in df.to_dict(orient="records")]
+    tickers = [linha[0] for linha in linhas]
+
+    def _gravar(cursor):
+        execute_values(cursor, sql_cache, linhas)
+        if len(tickers) >= MINIMO_ACOES_COLETA_COMPLETA:
+            cursor.execute(sql_remover_antigas, (tickers,))
+        cursor.execute(sql_limpar_dia, (momento.date(), momento.date()))
+        execute_values(cursor, sql_historico, linhas)
+
+    try:
+        _executar(_gravar)
+        print(f"🚀 [BANCO] {len(linhas)} ações gravadas ({momento:%d/%m/%Y %H:%M}).")
         return True
-    except Exception as e:
-        print(f"🚨 [ERRO SALVAR HISTÓRICO]: {e}")
-        return False
-
-
-def salvar_cache_acoes(df_base):
-    """Atualiza o cache geral de ações no Supabase utilizando UPSERT (ON CONFLICT)."""
-    if df_base.empty:
-        return False
-
-    query = '''
-        INSERT INTO acoes_cache (
-            ticker, nome, preco, pl, pvp, dy, roic, roe, margem, 
-            crescimento, liquidez, lpa, vpa, dpa_12m, evebit, patrimonio, divida_total, updated_at
-        ) VALUES %s
-        ON CONFLICT (ticker) DO UPDATE SET
-            nome = EXCLUDED.nome,
-            preco = EXCLUDED.preco,
-            pl = EXCLUDED.pl,
-            pvp = EXCLUDED.pvp,
-            dy = EXCLUDED.dy,
-            roic = EXCLUDED.roic,
-            roe = EXCLUDED.roe,
-            margem = EXCLUDED.margem,
-            crescimento = EXCLUDED.crescimento,
-            liquidez = EXCLUDED.liquidez,
-            lpa = EXCLUDED.lpa,
-            vpa = EXCLUDED.vpa,
-            dpa_12m = EXCLUDED.dpa_12m,
-            evebit = EXCLUDED.evebit,
-            patrimonio = EXCLUDED.patrimonio,
-            divida_total = EXCLUDED.divida_total,
-            updated_at = EXCLUDED.updated_at;
-    '''
-
-    try:
-        conexao = obter_conexao()
-        data_hoje = datetime.now()
-
-        dados_lote = [
-            _extrair_campos_df(row) + (data_hoje,)
-            for _, row in df_base.iterrows()
-        ]
-
-        with conexao.cursor() as cursor:
-            execute_values(cursor, query, dados_lote)
-        conexao.commit()
-        
-        print(f"🚀 [CACHE] {len(df_base)} ações sincronizadas na tabela acoes_cache!")
-        return True
-    except Exception as e:
-        print(f"🚨 [ERRO SALVAR CACHE]: {e}")
+    except Exception as erro:
+        print(f"🚨 [BANCO] Erro ao gravar coleta: {erro}")
         return False
 
 
 # =============================================================================
-# LEITURA DE DADOS
+# LEITURA
 # =============================================================================
-def ler_cache_acoes():
-    """Lê todas as ações da tabela acoes_cache em formato de dicionários."""
+def ler_cache():
+    """Lê o último snapshot de todas as ações (tabela acoes_cache)."""
     try:
-        conexao = obter_conexao()
-        with conexao.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute("SELECT * FROM acoes_cache;")
-            registros = cursor.fetchall()
-        return list(registros)
-    except Exception as e:
-        print(f"🚨 [ERRO LER CACHE]: {e}")
+        return _consultar("SELECT * FROM acoes_cache;")
+    except Exception as erro:
+        print(f"🚨 [BANCO] Erro ao ler cache: {erro}")
         return []
+
+
+def ler_historico(data_ref):
+    """
+    Lê o snapshot do último DIA DE COLETA até `data_ref` (datetime.date).
+
+    Usar apenas um único dia evita dois erros comuns de backtesting:
+      - olhar para o futuro (nenhum dado posterior a `data_ref` é usado);
+      - misturar dias diferentes (uma ação deslistada meses antes não
+        "reaparece" com dados velhos).
+
+    Retorna (registros, dia_utilizado) ou ([], None) se não houver coleta.
+    """
+    # Só considera coletas completas (industria preenchida); registros do formato
+    # antigo não têm LPA, VPA, setor nem dívida e não servem para os métodos.
+    sql = f"""
+        WITH ultimo_dia AS (
+            SELECT MAX(data_coleta)::date AS dia
+            FROM historico_acoes
+            WHERE data_coleta < (%s::date + 1) AND industria IS NOT NULL
+        )
+        SELECT DISTINCT ON (h.ticker) {", ".join("h." + c for c in COLUNAS)}, h.data_coleta
+        FROM historico_acoes h, ultimo_dia u
+        WHERE h.data_coleta >= u.dia AND h.data_coleta < (u.dia + 1) AND h.industria IS NOT NULL
+        ORDER BY h.ticker, h.data_coleta DESC;
+    """
+    try:
+        registros = _consultar(sql, (data_ref,))
+    except Exception as erro:
+        print(f"🚨 [BANCO] Erro ao ler histórico: {erro}")
+        return [], None
+    if not registros:
+        return [], None
+    return registros, registros[0]["data_coleta"].date()
+
+
+def periodo_historico():
+    """Retorna (primeiro_dia, ultimo_dia) com coletas completas no histórico, ou (None, None)."""
+    try:
+        linha = _consultar(
+            "SELECT MIN(data_coleta)::date AS inicio, MAX(data_coleta)::date AS fim "
+            "FROM historico_acoes WHERE industria IS NOT NULL;"
+        )
+    except Exception as erro:
+        print(f"🚨 [BANCO] Erro ao ler período do histórico: {erro}")
+        return None, None
+    return (linha[0]["inicio"], linha[0]["fim"]) if linha else (None, None)
+
+
+def ler_grafico(ticker, periodo):
+    """Último gráfico salvo para a ação e o período: (dados, updated_at) ou (None, None)."""
+    try:
+        linha = _consultar(
+            "SELECT dados, updated_at FROM graficos_cache WHERE ticker = %s AND periodo = %s;",
+            (ticker, periodo),
+        )
+    except Exception as erro:
+        print(f"🚨 [BANCO] Erro ao ler gráfico: {erro}")
+        return None, None
+    return (linha[0]["dados"], linha[0]["updated_at"]) if linha else (None, None)
+
+
+def salvar_grafico(ticker, periodo, dados):
+    """Grava (ou substitui) o gráfico consultado."""
+    sql = """
+        INSERT INTO graficos_cache (ticker, periodo, dados, updated_at) VALUES (%s, %s, %s, %s)
+        ON CONFLICT (ticker, periodo) DO UPDATE SET dados = EXCLUDED.dados, updated_at = EXCLUDED.updated_at;
+    """
+    try:
+        _executar(lambda cursor: cursor.execute(sql, (ticker, periodo, Json(dados), agora_b3())))
+    except Exception as erro:
+        print(f"🚨 [BANCO] Erro ao gravar gráfico: {erro}")

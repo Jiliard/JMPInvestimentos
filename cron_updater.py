@@ -1,34 +1,34 @@
+"""
+Rotina agendada (GitHub Actions, ver .github/workflows/cron.yml).
+
+Coleta os indicadores no TradingView e grava no Supabase. Não importa o
+servidor Flask: depende apenas dos módulos de coleta e de banco.
+"""
+
 import sys
-from pathlib import Path
 
-# Garante que o Python encontre os módulos na raiz do projeto
-RAIZ_PROJETO = Path(__file__).resolve().parent
-if str(RAIZ_PROJETO) not in sys.path:
-    sys.path.append(str(RAIZ_PROJETO))
-
+import coleta
 import database
-from app import buscar_e_calcular_dados_tradingview
 
 
-# =============================================================================
-# EXECUÇÃO DA ROTINA AGENDADA (CRON JOB)
-# =============================================================================
 def executar_job():
-    """Executa a varredura preventiva na B3 e sincroniza com o Supabase."""
-    print("🔄 [CRON JOB] Iniciando atualização preventiva do Supabase...")
-    
-    try:
-        df = buscar_e_calcular_dados_tradingview()
-        
-        if not df.empty:
-            database.salvar_cache_acoes(df)
-            print("✅ [CRON JOB] Dados atualizados com sucesso no Supabase!")
-        else:
-            print("🚨 [CRON JOB] Falha ao obter dados do TradingView (DataFrame vazio).")
-            
-    except Exception as e:
-        print(f"🚨 [ERRO CRÍTICO NO CRON JOB]: {e}")
+    """Executa a coleta e a gravação. Retorna True se tudo deu certo."""
+    print("🔄 [CRON] Iniciando atualização do Supabase...")
+    database.inicializar_banco()
+
+    df = coleta.buscar_acoes_tradingview()
+    if df.empty:
+        print("🚨 [CRON] TradingView não retornou dados.")
+        return False
+
+    if not database.salvar_coleta(df):
+        print("🚨 [CRON] Falha ao gravar no Supabase.")
+        return False
+
+    print("✅ [CRON] Atualização concluída.")
+    return True
 
 
 if __name__ == "__main__":
-    executar_job()
+    # Código de saída != 0 faz o GitHub Actions marcar a execução como falha
+    sys.exit(0 if executar_job() else 1)

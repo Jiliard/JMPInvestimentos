@@ -1,24 +1,36 @@
-# Cache do Python (arquivos temporários compilados)
+# =============================================================================
+# O repositório contém apenas a aplicação:
+#   app.py, coleta.py, estrategias.py, database.py, cron_updater.py,
+#   index.html, script.js, style.css, requirements.txt e .github/workflows/
+# =============================================================================
+
+# Relatórios do TCC (monografia, scripts de validação, backtesting e dados): nunca sobem
+/[Rr]elatorio/
+*.tex
+*.pdf
+*.aux
+*.lof
+*.lot
+*.loq
+*.out
+*.toc
+*.synctex.gz
+dados_backtest/
+resultados_backtest/
+
+# Segredos (senha do banco e chaves)
+.env
+.env.*
+
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-
-# Ambientes Virtuais do Python
 .venv/
 venv/
-ENV/
-env/
 
-# Configurações Locais da IDE (VS Code)
+# Editores e sistema
 .vscode/
 .idea/
-
-# Arquivos de Variáveis de Ambiente e Chaves Secretas (Supabase, API Keys, etc.)
-.env
-.env.local
-.env.*.local
-
-# Logs e Arquivos de Sistema
 *.log
 .DS_Store
 Thumbs.db

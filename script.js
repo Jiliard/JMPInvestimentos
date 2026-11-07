@@ -1,478 +1,460 @@
-/* ==============================================================================
-   CONFIGURAÇÕES GLOBAIS E ESTADO DA APLICAÇÃO
-   ============================================================================== */
-let dadosGlobais = [];
-let paginaAtual = 1;
-const itensPorPagina = 20;
+/* =============================================================================
+   JMP INVESTIMENTOS - FRONT-END
+   1. Configuração e formatação   2. Status da B3   3. Ranking e filtros   4. Análise de ação
+   ============================================================================= */
 
-let feriadosNacionais = [];
+/* ----------------------------- 1. CONFIGURAÇÃO ----------------------------- */
 
-/* ==============================================================================
-   1. OBTENÇÃO DE FERIADOS E STATUS DO MERCADO B3
-   ============================================================================== */
+// Na Vercel (ou abrindo o arquivo local) usa a API de produção; servido pelo Flask, usa a própria origem
+const API_PRODUCAO = 'https://jmpinvestimentos.onrender.com';
+const API = (location.origin === API_PRODUCAO || location.port === '5000') ? '' : API_PRODUCAO;
 
-// Obtém os feriados exclusivamente via BrasilAPI
-async function carregarCalendarioMercado() {
-    try {
-        const anoAtual = new Date().getFullYear();
-        const res = await fetch(`https://brasilapi.com.br/api/feriados/v1/${anoAtual}`);
-        if (res.ok) {
-            const data = await res.json();
-            feriadosNacionais = data.map(f => f.date);
-        }
-    } catch (error) {
-        console.warn("⚠️ Não foi possível carregar os feriados da BrasilAPI.", error);
-    }
+// Filtros padrão (Tabela 3 da monografia)
+const FILTROS_PADRAO = { liq_min: 100000, pl_max: 20, pvp_max: 2, divida_max: 1.5, roe_min: 10,
+                         roic_min: 10, margem_min: 5, cagr_min: 0, dy_min: 0 };
+const ITENS_POR_PAGINA = 25;
+const CHAVE_CACHE = 'jmp:ultima-busca:v2';
+
+let dados = [];
+let pagina = 1;
+let feriados = [];
+let ultimaRequisicao = 0;
+
+const $ = id => document.getElementById(id);
+const icones = () => window.lucide && lucide.createIcons();
+const ehNumero = v => typeof v === 'number' && Number.isFinite(v);
+const escapar = t => String(t ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+
+// Formatação brasileira (1.234,56); dado ausente aparece como "N/D"
+const formato = casas => new Intl.NumberFormat('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas });
+const num = (v, casas = 2, sufixo = '') => ehNumero(v) ? formato(casas).format(v) + sufixo : 'N/D';
+const pct = (v, casas = 1) => ehNumero(v) ? formato(casas).format(v * 100) + '%' : 'N/D';
+const reais = v => ehNumero(v) ? 'R$ ' + formato(2).format(v) : 'N/D';
+const grande = v => {   // valores grandes: R$ 1,2 bi / R$ 350,0 mi
+    if (!ehNumero(v)) return 'N/D';
+    const [divisor, sufixo] = Math.abs(v) >= 1e9 ? [1e9, ' bi'] : Math.abs(v) >= 1e6 ? [1e6, ' mi'] : [1e3, ' mil'];
+    return 'R$ ' + formato(1).format(v / divisor) + sufixo;
+};
+const cor = v => ehNumero(v) && v < 0 ? 'baixa' : 'alta';
+
+// Colunas da tabela: as duas do método (em destaque) e os indicadores fixos, iguais para todos
+const coluna = (titulo, valor, dica = '', classe = () => '') => ({ titulo, valor, dica, classe });
+const COLUNAS_FIXAS = [
+    coluna('P/L', i => num(i.pl, 1), 'Preço sobre lucro'),
+    coluna('P/VP', i => num(i.pvp, 2), 'Preço sobre valor patrimonial'),
+    coluna('ROIC', i => pct(i.roic), 'Retorno sobre o capital investido'),
+    coluna('ROE', i => pct(i.roe), 'Retorno sobre o patrimônio líquido'),
+    coluna('DY', i => pct(i.dy), 'Dividendos dos últimos 12 meses sobre o preço'),
+    coluna('Cresc. 5a', i => pct(i.crescimento), 'Crescimento anual composto do lucro por ação em 5 anos'),
+];
+const METODOS = {
+    graham: {
+        descricao: '<b>Preço Justo = √(22,5 × LPA × VPA)</b>. Considera empresas com lucro e patrimônio positivos e ordena pela maior margem de segurança.',
+        colunas: [coluna('Valor Justo Graham', i => reais(i.valor_justo), 'Valor intrínseco de Graham', () => 'destaque'),
+                  coluna('Margem de Segurança', i => pct(i.potencial), 'Quanto o preço justo está acima da cotação', i => cor(i.potencial))],
+    },
+    bazin: {
+        descricao: '<b>Preço Teto = dividendos dos últimos 12 meses ÷ 6%</b>. Considera ações com Dividend Yield de pelo menos 6% e ordena pelo maior desconto ao teto.',
+        colunas: [coluna('Preço Teto Bazin', i => reais(i.preco_teto), 'Preço máximo para render 6% ao ano em dividendos', () => 'destaque'),
+                  coluna('Desconto ao Teto', i => pct(i.potencial), 'Quanto o preço teto está acima da cotação', i => cor(i.potencial))],
+    },
+    greenblatt: {
+        descricao: '<b>Pontuação = posição em ROIC + posição em EV/EBIT</b> (menor é melhor). Exclui bancos, seguradoras, holdings financeiras e utilidade pública.',
+        colunas: [coluna('Pontuação', i => num(i.potencial, 0) + ' pts', 'Soma das duas posições', () => 'destaque'),
+                  coluna('Posições ROIC + EV/EBIT', i => `${num(i.pos_roic, 0)}º + ${num(i.pos_evebit, 0)}º`, 'Posição no ranking de ROIC + posição no de EV/EBIT')],
+    },
+    lynch: {
+        descricao: '<b>PEG = P/L ÷ crescimento anual do lucro por ação em 5 anos (%)</b>. Abaixo de 1 indica crescimento a preço razoável. Ordena do menor PEG.',
+        colunas: [coluna('PEG Ratio', i => num(i.peg_ratio), 'P/L dividido pelo crescimento', () => 'destaque'),
+                  coluna('Crescimento (CAGR)', i => pct(i.crescimento) + ' a.a.', 'CAGR do lucro por ação em 5 anos', i => cor(i.crescimento))],
+    },
+};
+
+const SETORES = {
+    'Commercial Services': 'Serviços Comerciais', 'Communications': 'Comunicações',
+    'Consumer Durables': 'Bens Duráveis', 'Consumer Non-Durables': 'Bens Não Duráveis',
+    'Consumer Services': 'Serviços ao Consumidor', 'Distribution Services': 'Distribuição',
+    'Electronic Technology': 'Tecnologia Eletrônica', 'Energy Minerals': 'Petróleo e Gás',
+    'Finance': 'Financeiro e Imobiliário', 'Health Services': 'Serviços de Saúde',
+    'Health Technology': 'Tecnologia em Saúde', 'Industrial Services': 'Serviços Industriais',
+    'Miscellaneous': 'Diversos', 'Non-Energy Minerals': 'Mineração e Siderurgia',
+    'Process Industries': 'Indústrias de Processo', 'Producer Manufacturing': 'Bens Industriais',
+    'Retail Trade': 'Varejo', 'Technology Services': 'Tecnologia', 'Transportation': 'Transporte',
+    'Utilities': 'Utilidade Pública',
+};
+
+const logoOuIniciais = (url, ticker) =>
+    `<img src="${escapar(url)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='https://ui-avatars.com/api/?name=${escapar(ticker).slice(0, 2)}&background=16223a&color=10b981&bold=true'">`;
+
+function lerCache() { try { return JSON.parse(localStorage.getItem(CHAVE_CACHE)); } catch { return null; } }
+function gravarCache(valor) { try { localStorage.setItem(CHAVE_CACHE, JSON.stringify(valor)); } catch { /* sem cache */ } }
+
+
+/* ---------------------------- 2. STATUS DA B3 ------------------------------ */
+function horaB3() {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Sao_Paulo', weekday: 'short', year: 'numeric', month: '2-digit',
+        day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(new Date()).map(x => [x.type, x.value]));
+    return { data: `${p.year}-${p.month}-${p.day}`, semana: p.weekday, minutos: (+p.hour % 24) * 60 + +p.minute };
 }
 
 function atualizarRelogio() {
     const agora = new Date();
-    const opcoesData = { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' };
-    const opcoesHora = { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-    
-    const dataStr = agora.toLocaleDateString('pt-BR', opcoesData);
-    const horaStr = agora.toLocaleTimeString('pt-BR', opcoesHora);
-    
-    const clockElement = document.getElementById('clock-display');
-    if (clockElement) {
-        clockElement.innerText = `${horaStr} - ${dataStr}`;
-    }
+    const opcoes = { timeZone: 'America/Sao_Paulo' };
+    $('clock-display').textContent = `${agora.toLocaleTimeString('pt-BR', opcoes)} - ${agora.toLocaleDateString('pt-BR', opcoes)}`;
 }
 
-function verificarStatusMercadoB3() {
-    const agora = new Date();
-    const dataSP = agora.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }); 
-    const diaSemana = agora.getDay(); 
-    
-    const horas = agora.getHours();
-    const minutos = agora.getMinutes();
-    const tempoEmMinutos = horas * 60 + minutos;
-    
-    const statusBox = document.getElementById('market-status');
-    const statusText = document.getElementById('status-text');
-    if (!statusBox || !statusText) return;
+function atualizarMercado() {
+    const { data, semana, minutos } = horaB3();
+    // A B3 segue o horário de verão dos EUA: pregão até 17h com Nova York em horário de verão, senão até 18h
+    const nyVerao = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' })
+        .format(new Date()).includes('EDT');
+    const fechamento = (nyVerao ? 17 : 18) * 60;
+    let texto = 'B3 Fechada';
+    let aberto = false;
 
-    // 1. Fim de Semana (Sábado = 6, Domingo = 0)
-    if (diaSemana === 0 || diaSemana === 6) {
-        statusBox.className = "market-status closed";
-        statusText.innerText = "B3 Mercado Fechado";
-        return;
-    }
+    if (['Sat', 'Sun'].includes(semana)) texto = 'B3 Fechada (fim de semana)';
+    else if (feriados.includes(data) || ['12-24', '12-31'].includes(data.slice(5))) texto = 'B3 Fechada (feriado)';
+    else if (minutos >= 600 && minutos < fechamento) { aberto = true; texto = 'B3 Aberta'; }
+    else if (minutos >= 585 && minutos < 600) texto = 'B3 Pré-abertura';
 
-    // 2. Feriados Nacionais obtidos da API
-    if (feriadosNacionais.includes(dataSP)) {
-        statusBox.className = "market-status closed";
-        statusText.innerText = "B3 Fechado (Feriado)";
-        return;
-    }
-
-    // 3. Vésperas de Fim de Ano (Sem Pregão)
-    const diaMes = dataSP.slice(5); // Pega 'MM-DD'
-    if (diaMes === '12-24' || diaMes === '12-31') {
-        statusBox.className = "market-status closed";
-        statusText.innerText = "B3 Fechado (Sem Pregão)";
-        return;
-    }
-
-    const inicioMercado = 10 * 60; // 10:00h
-    const fimMercado = 18 * 60;    // 18:00h
-
-    // 4. Validação do Horário do Pregão
-    if (tempoEmMinutos >= inicioMercado && tempoEmMinutos < fimMercado) {
-        statusBox.className = "market-status open";
-        if (tempoEmMinutos >= (17 * 60 + 55)) {
-            statusText.innerText = "B3 Leilão de Fechamento";
-        } else {
-            statusText.innerText = "B3 Mercado Ativo";
-        }
-    } else {
-        statusBox.className = "market-status closed";
-        if (tempoEmMinutos >= (9 * 60 + 45) && tempoEmMinutos < inicioMercado) {
-            statusText.innerText = "B3 Pré-Abertura";
-        } else {
-            statusText.innerText = "B3 Mercado Fechado";
-        }
-    }
+    $('market-status').className = `mercado ${aberto ? 'aberto' : 'fechado'}`;
+    $('status-text').textContent = texto;
 }
 
-// Inicializadores
-carregarCalendarioMercado().then(() => {
-    verificarStatusMercadoB3();
-});
+async function carregarFeriados() {
+    try {
+        const resposta = await fetch(`https://brasilapi.com.br/api/feriados/v1/${horaB3().data.slice(0, 4)}`);
+        if (resposta.ok) feriados = (await resposta.json()).map(f => f.date);
+    } catch { /* sem feriados: considera apenas fins de semana */ }
+}
 
-setInterval(atualizarRelogio, 1000);
-setInterval(verificarStatusMercadoB3, 30000);
-atualizarRelogio();
 
-/* ==============================================================================
-   2. NAVEGAÇÃO, TOOLTIPS E SELETORES
-   ============================================================================== */
+/* --------------------------- 3. RANKING E FILTROS -------------------------- */
 function mudarAba(aba) {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.aba-content').forEach(c => c.classList.remove('active'));
-    
-    if (aba === 'screener') {
-        document.querySelectorAll('.tab-btn')[0].classList.add('active');
-        document.getElementById('aba-screener').classList.add('active');
-    } else {
-        document.querySelectorAll('.tab-btn')[1].classList.add('active');
-        document.getElementById('aba-detalhes').classList.add('active');
-        if (document.getElementById('lista-tickers').children.length === 0) carregarTickers();
-    }
+    document.querySelectorAll('.aba-btn').forEach(b => b.classList.toggle('ativa', b.dataset.aba === aba));
+    $('aba-screener').classList.toggle('ativa', aba === 'screener');
+    $('aba-detalhes').classList.toggle('ativa', aba === 'detalhes');
+    if (aba === 'detalhes' && !$('lista-tickers').children.length) carregarTickers();
+}
+
+function marcarEstrategia(metodo) {
+    document.querySelectorAll('.estrategia').forEach(b => {
+        b.classList.toggle('ativa', b.dataset.metodo === metodo);
+        b.setAttribute('aria-checked', b.dataset.metodo === metodo);
+    });
+    $('metodo').value = metodo;
+    $('descricao-metodo').innerHTML = METODOS[metodo].descricao;
+    const titulo = (c, classe = '') => `<th class="${classe}" title="${c.dica}">${c.titulo}</th>`;
+    $('cabecalho-tabela').innerHTML = '<th>#</th><th class="esq">Empresa</th><th>Cotação</th>' +
+        METODOS[metodo].colunas.map(c => titulo(c, 'coluna-metodo')).join('') + COLUNAS_FIXAS.map(c => titulo(c)).join('');
 }
 
 function selecionarEstrategia(metodo) {
-    document.querySelectorAll('.strategy-pill').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-metodo') === metodo);
-    });
-    document.getElementById('metodo').value = metodo;
-    atualizarTooltipMetodo();
+    marcarEstrategia(metodo);
     carregarDados();
 }
 
-function atualizarTooltipMetodo() {
-    const m = document.getElementById('metodo').value;
-    const tt = document.getElementById('tooltip-metodo');
-    
-    if (m === 'graham') {
-        tt.setAttribute('data-tooltip', "Benjamin Graham: Calcula o valor intrínseco baseado no patrimônio e lucro da empresa.");
-    } else if (m === 'bazin') {
-        tt.setAttribute('data-tooltip', "Décio Bazin: Focado em renda passiva, calcula o Preço Teto para garantir dividendo mínimo de 6% ao ano.");
-    } else if (m === 'greenblatt') {
-        tt.setAttribute('data-tooltip', "Joel Greenblatt: Magic Formula combinando alta rentabilidade com baixo múltiplo.");
-    } else if (m === 'lynch') {
-        tt.setAttribute('data-tooltip', "Peter Lynch: Identifica ações de crescimento dividindo o P/L pelo crescimento da receita (PEG).");
+// Mostra no título dos filtros quantos estão diferentes do padrão
+function atualizarSeloFiltros() {
+    const alterados = Object.keys(FILTROS_PADRAO).filter(c => $(c).value !== String(FILTROS_PADRAO[c])).length;
+    $('selo-filtros').hidden = alterados === 0;
+    $('selo-filtros').textContent = `${alterados} alterado${alterados > 1 ? 's' : ''}`;
+}
+
+function preencherFiltros(filtros) {
+    Object.keys(FILTROS_PADRAO).forEach(campo => { $(campo).value = filtros[campo] ?? ''; });
+}
+
+function restaurarPadrao() {
+    preencherFiltros(FILTROS_PADRAO);
+    carregarDados();
+}
+
+function limparDataReferencia() {
+    $('data_ref').value = '';
+    carregarDados();
+}
+
+function lerTela() {
+    const filtros = { metodo: $('metodo').value, data: $('data_ref').value };
+    Object.keys(FILTROS_PADRAO).forEach(campo => { filtros[campo] = $(campo).value; });
+    return filtros;
+}
+
+function status(texto, tipo = '') {
+    $('status-dados').className = `status ${tipo}`;
+    $('status-dados').textContent = texto;
+}
+
+function descreverData(dataBase, historico) {
+    if (!dataBase) return '';
+    const data = new Date(historico ? dataBase + 'T12:00' : dataBase);
+    return historico
+        ? `Modo de teste: dados do pregão de ${data.toLocaleDateString('pt-BR')}`
+        : `Dados de ${data.toLocaleDateString('pt-BR')} às ${data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function mensagemTabela(titulo, texto = '', carregando = false) {
+    const colunas = METODOS[$('metodo').value].colunas.length + COLUNAS_FIXAS.length + 3;
+    $('tabela-resultados').tBodies[0].innerHTML = `<tr><td colspan="${colunas}" class="mensagem">
+        ${carregando ? '<div class="carregador"></div>' : ''}<h3>${escapar(titulo)}</h3><p>${escapar(texto)}</p></td></tr>`;
+}
+
+/**
+ * Consulta o ranking. Na abertura da página (usarCache = true) mostra na hora a
+ * última busca salva no navegador e atualiza os dados por baixo dos panos.
+ */
+async function carregarDados(usarCache = false) {
+    atualizarSeloFiltros();
+    const filtros = lerTela();
+    const id = ++ultimaRequisicao;
+    const cache = usarCache && lerCache();
+
+    if (cache?.dados) {
+        exibir(cache.dados);
+        status(`${descreverData(cache.dataBase, !!cache.filtros.data)} · atualizando...`, 'carregando');
+    } else {
+        mensagemTabela('Consultando o mercado...', '', true);
+        status('Consultando...', 'carregando');
     }
-}
 
-function selecionarPeriodo(periodo) {
-    document.querySelectorAll('.periodo-pill').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-periodo') === periodo);
-    });
-    document.getElementById('select-periodo').value = periodo;
-    carregarAnalise();
-}
-
-/* ==============================================================================
-   3. CONSULTA E RENDERIZAÇÃO DA TABELA (SCREENER)
-   ============================================================================== */
-async function carregarDados() {
-    const tbody = document.querySelector('#tabela-resultados tbody');
-    tbody.innerHTML = `<tr><td colspan="13"><div class="spinner-box"><div class="spinner"></div><strong>Consultando base de dados do mercado...</strong></div></td></tr>`;
-    
-    const p = param => document.getElementById(param) ? document.getElementById(param).value : 0;
-    
-    const url = `https://jmpinvestimentos.onrender.com/api/rankings?metodo=${p('metodo')}&liq_min=${p('liq_min')}&pl_max=${p('pl_max')}&pvp_max=${p('pvp_max')}&dy_min=${p('dy_min')}&roe_min=${p('roe_min')}&roic_min=${p('roic_min')}&margem_min=${p('margem_min')}&cagr_min=${p('cagr_min')}&divida_max=${p('divida_max')}`;
-    
     try {
-        const res = await fetch(url);
-        dadosGlobais = await res.json();
-        paginaAtual = 1;        
-        
-        // Atualização de KPIs
-        document.getElementById('kpi-count').innerText = dadosGlobais.length;
-        const pls = dadosGlobais.filter(d => d.pl > 0).map(d => d.pl).sort((a,b) => a-b);
-        document.getElementById('kpi-pl').innerText = pls.length ? `${pls[Math.floor(pls.length/2)].toFixed(1)}x` : '-';
-        
-        const med = campo => dadosGlobais.reduce((acc, item) => acc + item[campo], 0) / (dadosGlobais.length || 1);
-        document.getElementById('kpi-roic').innerText = `${(med('roic') * 100).toFixed(1)}%`;
-        document.getElementById('kpi-dy').innerText = `${(med('dy') * 100).toFixed(1)}%`;
+        const resposta = await fetch(`${API}/api/rankings?${new URLSearchParams(filtros)}`);
+        const corpo = await resposta.json().catch(() => null);
+        if (id !== ultimaRequisicao) return;          // o usuário já mudou o filtro
+        if (!resposta.ok || !Array.isArray(corpo)) throw new Error(corpo?.error || `Erro ${resposta.status} no servidor.`);
 
-        // Ajuste Dinâmico do Cabeçalho da Tabela
-        const m = p('metodo');
-        const col1 = document.getElementById('th-col1');
-        const col2 = document.getElementById('th-col2');
-        
-        col1.style.display = "";
-        col2.style.display = "";
-        
-        if (m === 'graham') {
-            col1.innerHTML = 'Valor Justo Graham';
-            col2.innerHTML = 'Margem de Segurança';
-        } else if (m === 'bazin') {
-            col1.innerHTML = 'Preço Teto Bazin';
-            col2.innerHTML = 'Potencial de Renda';
-        } else if (m === 'greenblatt') {
-            col1.innerHTML = 'Pontuação Geral';
-            col2.style.display = "none"; 
-        } else if (m === 'lynch') {
-            col1.innerHTML = 'PEG Ratio';
-            col2.innerHTML = 'Crescimento (CAGR)';
+        const dataBase = resposta.headers.get('X-Data-Base') || '';
+        // Com data de referência, o servidor devolve o dia usado (AAAA-MM-DD). Se não devolver,
+        // ele ignorou a data (ex.: versão antiga publicada) e os dados seriam os atuais.
+        if (filtros.data && !/^\d{4}-\d{2}-\d{2}$/.test(dataBase)) {
+            throw new Error('O servidor não aplicou a data de referência (a versão publicada ainda não tem o modo de teste). Os dados atuais não foram exibidos para evitar confusão.');
         }
-
-        renderizarTabela();
-    } catch (error) {
-        tbody.innerHTML = `<tr><td colspan="13"><div class="placeholder-box"><h3 style="color:#ef5350;">Aguardando Servidor</h3><p>O servidor está iniciando. Atualize a página em alguns segundos.</p></div></td></tr>`;
+        exibir(corpo);
+        status(descreverData(dataBase, !!filtros.data));
+        gravarCache({ filtros, dados: corpo, dataBase });
+    } catch (erro) {
+        if (id !== ultimaRequisicao) return;
+        const semConexao = erro instanceof TypeError;   // falha de rede (ex.: servidor acordando)
+        const texto = semConexao ? 'Servidor iniciando. Tente novamente em alguns segundos.' : erro.message;
+        // Sem conexão, mantém a última busca na tela; erro do servidor (ex.: data sem histórico) é mostrado na tabela
+        if (semConexao && cache?.dados) return status(`${texto} Exibindo a última busca.`, 'erro');
+        exibir([], false);
+        status(texto, 'erro');
+        mensagemTabela(filtros.data ? 'Sem dados para a data de referência' : 'Não foi possível carregar o ranking', texto);
     }
+}
+
+// Posição de cada ação num critério (empates recebem a mesma posição, como no back-end)
+function posicoes(lista, campo, crescente) {
+    const valores = lista.map(i => i[campo]);
+    return valores.map(v => 1 + valores.filter(o => crescente ? o < v : o > v).length);
+}
+
+function exibir(lista, renderizar = true) {
+    // Servidores antigos não enviam as posições da Magic Formula: calcula sobre a própria lista
+    if ($('metodo').value === 'greenblatt' && lista.length && lista[0].pos_roic == null) {
+        const roic = posicoes(lista, 'roic', false);
+        const evebit = posicoes(lista, 'evebit', true);
+        lista.forEach((item, i) => { item.pos_roic = roic[i]; item.pos_evebit = evebit[i]; });
+    }
+    dados = lista;
+    pagina = 1;
+    const valores = campo => dados.map(d => d[campo]).filter(ehNumero);
+    const media = campo => { const v = valores(campo); return v.length ? v.reduce((a, b) => a + b) / v.length : null; };
+    const pls = valores('pl').sort((a, b) => a - b);
+
+    $('kpi-count').textContent = dados.length;
+    $('kpi-pl').textContent = pls.length ? num(pls[Math.floor(pls.length / 2)], 1, 'x') : '-';
+    $('kpi-roic').textContent = dados.length ? pct(media('roic')) : '-';
+    $('kpi-dy').textContent = dados.length ? pct(media('dy')) : '-';
+    if (renderizar) renderizarTabela();
 }
 
 function renderizarTabela() {
-    const tbody = document.querySelector('#tabela-resultados tbody');
-    tbody.innerHTML = '';
-    
-    if (!dadosGlobais || dadosGlobais.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="13">
-                    <div class="placeholder-box">
-                        <i data-lucide="filter-x" style="width: 48px; height: 48px; color: #E11D48;"></i>
-                        <h3 style="color: #F8FAFC; margin: 5px 0 0 0;">Nenhum ativo encontrado</h3>
-                    </div>
-                </td>
-            </tr>
-        `;
-        if (window.lucide) lucide.createIcons();
-        document.getElementById('pag-info').innerText = "Exibindo 0-0 de 0 ativos";
-        document.getElementById('pag-atual').innerText = "Página 1";
+    if (!dados.length) {
+        mensagemTabela('Nenhuma ação atende aos filtros', 'Afrouxe algum filtro ou use "Restaurar padrão".');
+        $('pag-info').textContent = '0 ações';
+        $('pag-atual').textContent = '1';
         return;
     }
+    const colunas = METODOS[$('metodo').value].colunas;
+    const inicio = (pagina - 1) * ITENS_POR_PAGINA;
+    const fim = Math.min(inicio + ITENS_POR_PAGINA, dados.length);
 
-    const inicio = (paginaAtual - 1) * itensPorPagina;
-    const fim = inicio + itensPorPagina;
-    const itens = dadosGlobais.slice(inicio, fim);
-    const m = document.getElementById('metodo').value;
+    $('tabela-resultados').tBodies[0].innerHTML = dados.slice(inicio, fim).map(item => `
+        <tr onclick="abrirAnalise('${escapar(item.ticker)}')" title="Ver análise de ${escapar(item.ticker)}">
+            <td><span class="posicao">${item.rank}º</span></td>
+            <td class="esq"><div class="empresa">${logoOuIniciais(item.logo, item.ticker)}
+                <div><strong>${escapar(item.ticker)}</strong><small>${escapar(item.nome)}</small></div></div></td>
+            <td>${reais(item.preco)}</td>
+            ${colunas.map(c => `<td class="coluna-metodo ${c.classe(item)}">${c.valor(item)}</td>`).join('')}
+            ${COLUNAS_FIXAS.map(c => `<td>${c.valor(item)}</td>`).join('')}
+        </tr>`).join('');
 
-    itens.forEach(item => {
-        let tdCol1 = '';
-        let tdCol2 = '';
-
-        if (m === 'graham') {
-            tdCol1 = `<td><strong>R$ ${item.valor_justo.toFixed(2)}</strong></td>`;
-            tdCol2 = `<td class="val-positive">${(item.potencial * 100).toFixed(1)}%</td>`;
-        } else if (m === 'bazin') {
-            tdCol1 = `<td><strong>R$ ${item.preco_teto.toFixed(2)}</strong></td>`;
-            tdCol2 = `<td class="val-positive">${(item.potencial * 100).toFixed(1)}%</td>`;
-        } else if (m === 'greenblatt') {
-            tdCol1 = `<td><strong>${item.potencial} pts</strong></td>`;
-        } else if (m === 'lynch') {
-            tdCol1 = `<td><strong>${item.peg_ratio.toFixed(2)}</strong></td>`;
-            tdCol2 = `<td class="val-positive">${(item.crescimento * 100).toFixed(1)}% a.a.</td>`;
-        }
-
-        const fallbackAvatar = `https://ui-avatars.com/api/?name=${item.ticker.slice(0,2)}&background=1E293B&color=10B981&bold=true&size=64`;
-        
-        tbody.innerHTML += `
-            <tr>
-                <td><span class="rank-badge">${item.rank}º</span></td>
-                <td><img src="${item.logo}" class="logo-img" alt="${item.ticker}" onerror="this.onerror=null; this.src='${fallbackAvatar}';"></td>
-                <td>${item.nome}</td>
-                <td><strong>${item.ticker}</strong></td>
-                <td>R$ ${item.preco.toFixed(2)}</td>
-                ${tdCol1}
-                ${tdCol2}
-                <td>${item.pl.toFixed(1)}</td>
-                <td>${item.pvp.toFixed(1)}</td>
-                <td>${(item.roic * 100).toFixed(1)}%</td>
-                <td>${(item.roe * 100).toFixed(1)}%</td>
-                <td>${(item.dy * 100).toFixed(1)}%</td>
-                <td>${(item.crescimento * 100).toFixed(1)}%</td>
-            </tr>
-        `;
-    });
-
-    document.getElementById('pag-info').innerText = `Exibindo ${dadosGlobais.length ? inicio + 1 : 0}-${Math.min(fim, dadosGlobais.length)} de ${dadosGlobais.length} ativos`;
-    document.getElementById('pag-atual').innerText = `Página ${paginaAtual}`;
-    if (window.lucide) lucide.createIcons();
+    $('pag-info').textContent = `${inicio + 1}–${fim} de ${dados.length} ações`;
+    $('pag-atual').textContent = `${pagina} de ${Math.ceil(dados.length / ITENS_POR_PAGINA)}`;
+    icones();
 }
 
 function mudarPagina(direcao) {
-    const totalPaginas = Math.ceil(dadosGlobais.length / itensPorPagina);
-    paginaAtual += direcao;
-    if (paginaAtual < 1) paginaAtual = 1;
-    if (paginaAtual > totalPaginas) paginaAtual = totalPaginas;
+    const total = Math.max(1, Math.ceil(dados.length / ITENS_POR_PAGINA));
+    pagina = Math.min(Math.max(pagina + direcao, 1), total);
     renderizarTabela();
 }
 
+// Limita o campo de data ao período do histórico e informa esse período ao usuário
+async function configurarDataReferencia() {
+    const campo = $('data_ref');
+    campo.max = horaB3().data;
+    try {
+        const { inicio, fim } = await (await fetch(`${API}/api/historico/periodo`)).json();
+        const br = d => d.split('-').reverse().join('/');
+        if (inicio) {
+            campo.min = inicio;   // depois do último dia coletado, vale o último pregão disponível
+            $('periodo-historico').textContent = `Histórico disponível de ${br(inicio)} a ${br(fim)}.`;
+        } else {
+            $('periodo-historico').textContent = 'Histórico ainda vazio: as coletas diárias começam a ser gravadas após a implantação.';
+        }
+    } catch { /* sem informação do período: o servidor também valida a data */ }
+}
+
+
+/* --------------------------- 4. ANÁLISE DE AÇÃO ---------------------------- */
 async function carregarTickers() {
-    const res = await fetch('https://jmpinvestimentos.onrender.com/api/tickers');
-    const tickers = await res.json();
-    const datalist = document.getElementById('lista-tickers');
-    datalist.innerHTML = '';
-    tickers.forEach(t => datalist.innerHTML += `<option value="${t}">`);
+    try {
+        const tickers = await (await fetch(`${API}/api/tickers`)).json();
+        $('lista-tickers').innerHTML = tickers.map(t => `<option value="${escapar(t)}">`).join('');
+    } catch { /* a busca continua funcionando digitando o código */ }
 }
 
-function gerarModuloProventos(dyDecimal, precoAtual, dpa12m) {
-    if (dyDecimal <= 0.001 || dpa12m <= 0) {
-        return `
-            <div class="proventos-section">
-                <h4><i data-lucide="coins"></i> Histórico de Proventos (12 Meses)</h4>
-                <p style="color: #94A3B8; font-size: 0.85rem; margin: 0;">Este ativo não registrou distribuição relevante de proventos nos últimos 12 meses.</p>
-            </div>
-        `;
-    }
+function abrirAnalise(ticker) {
+    $('input-ticker').value = ticker;
+    mudarAba('detalhes');
+    carregarAnalise();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
 
-    const dyPorcento = (dyDecimal * 100).toFixed(2);
-    
+function selecionarPeriodo(periodo) {
+    document.querySelectorAll('.periodo').forEach(b => b.classList.toggle('ativa', b.dataset.periodo === periodo));
+    $('select-periodo').value = periodo;
+    carregarAnalise();
+}
+
+function montarFicha(d) {
+    const f = d.fundamentos;
+    const linha = (rotulo, valor, dica = '') => `<div class="linha" title="${dica}"><span>${rotulo}</span><span class="valor">${valor}</span></div>`;
+    const temProventos = ehNumero(f.dy) && f.dy > 0;
+
     return `
-        <div class="proventos-section">
-            <h4><i data-lucide="coins"></i> Proventos Consolidados (Últimos 12 Meses)</h4>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px;">
-                <div style="background: var(--bg-card); padding: 12px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
-                    <span style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase;">Total por Ação (DPA)</span>
-                    <h3 style="margin: 5px 0 0 0; color: #34D399; font-family: var(--font-mono);">R$ ${dpa12m.toFixed(2)}</h3>
-                </div>
-                <div style="background: var(--bg-card); padding: 12px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
-                    <span style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase;">Dividend Yield (DY)</span>
-                    <h3 style="margin: 5px 0 0 0; color: #34D399; font-family: var(--font-mono);">${dyPorcento}%</h3>
-                </div>
-            </div>
+    <div class="cartao">
+        <div class="ficha-topo">
+            <div class="empresa">${logoOuIniciais(d.logo, d.ticker)}
+                <div><h2>${escapar(d.nome)}</h2><small>${escapar(d.ticker)} · ${escapar(SETORES[d.setor] || d.setor || 'Setor não informado')}</small></div></div>
+            <div class="preco-atual"><span class="dica">Cotação</span><br><strong>${reais(f.preco)}</strong></div>
         </div>
-    `;
+        <div class="grupos">
+            <div class="grupo"><h4>Preço e valuation</h4>
+                ${linha('P/L', num(f.pl, 2, 'x'), 'Preço sobre lucro dos últimos 12 meses')}
+                ${linha('P/VP', num(f.pvp, 2, 'x'), 'Preço sobre valor patrimonial')}
+                ${linha('EV/EBIT', num(f.evebit, 2, 'x'), 'Valor da firma sobre lucro operacional')}
+                ${linha('LPA', reais(f.lpa), 'Lucro por ação (12 meses)')}
+                ${linha('VPA', reais(f.vpa), 'Valor patrimonial por ação')}</div>
+            <div class="grupo"><h4>Rentabilidade e crescimento</h4>
+                ${linha('ROE', pct(f.roe), 'Retorno sobre o patrimônio líquido')}
+                ${linha('ROIC', pct(f.roic), 'Retorno sobre o capital investido')}
+                ${linha('Margem líquida', pct(f.margem))}
+                ${linha('Crescimento do lucro (5 anos)', ehNumero(f.crescimento) ? pct(f.crescimento) + ' a.a.' : 'N/D', 'CAGR do lucro por ação')}
+                ${linha('Dividend Yield (12 meses)', pct(f.dy))}</div>
+            <div class="grupo"><h4>Balanço e liquidez</h4>
+                ${linha('Patrimônio líquido', grande(f.patrimonio))}
+                ${linha('Dívida bruta', grande(f.divida_total))}
+                ${linha('Dívida / Patrimônio', num(f.divida_patrimonio, 2, 'x'))}
+                ${linha('Liquidez média diária', grande(f.liquidez), 'Média dos últimos 30 pregões')}
+                ${linha('Dividendos por ação (12 meses)', temProventos ? reais(f.dpa_12m) : 'Sem proventos')}</div>
+        </div>
+        <div class="links">
+            <a class="botao-secundario" href="${escapar(f.links.site_ri)}" target="_blank" rel="noopener">Site de RI</a>
+            <a class="botao-secundario" href="${escapar(f.links.relatorio_oficial)}" target="_blank" rel="noopener">Ver no TradingView</a>
+        </div>
+    </div>`;
 }
 
-/* ==============================================================================
-   4. ANÁLISE DETALHADA E GRÁFICOS TÉCNICOS (PLOTLY)
-   ============================================================================== */
+function desenharGrafico(g, periodo) {
+    const semanal = ['5 Anos', '10 Anos'].includes(periodo);
+    const subiu = g.close.map((c, i) => c >= g.open[i]);
+    const linhaRef = (y, cor) => ({ x: [g.dates[0], g.dates.at(-1)], y: [y, y], yaxis: 'y3', mode: 'lines',
+                                    line: { color: cor, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
+    const series = [
+        { type: 'candlestick', name: 'Preço', x: g.dates, open: g.open, high: g.high, low: g.low, close: g.close,
+          increasing: { line: { color: '#22c55e' } }, decreasing: { line: { color: '#f05252' } } },
+        { name: semanal ? 'Média 10 sem.' : 'Média 50', x: g.dates, y: g.ma50, mode: 'lines', line: { color: '#f59e0b', width: 1.5 } },
+        { name: semanal ? 'Média 40 sem.' : 'Média 200', x: g.dates, y: g.ma200, mode: 'lines', line: { color: '#60a5fa', width: 1.5 } },
+        { type: 'bar', name: 'Volume', x: g.dates, y: g.volume, yaxis: 'y2', showlegend: false,
+          marker: { color: subiu.map(s => s ? 'rgba(34,197,94,.25)' : 'rgba(240,82,82,.25)') } },
+        { name: 'IFR (14)', x: g.dates, y: g.rsi, yaxis: 'y3', mode: 'lines', line: { color: '#a78bfa', width: 1.5 } },
+        linhaRef(70, '#f05252'), linhaRef(30, '#22c55e'),
+    ];
+    const eixo = { gridcolor: '#1e2a42', zerolinecolor: '#1e2a42' };
+    const layout = {
+        height: 600, margin: { l: 56, r: 16, t: 8, b: 32 }, separators: ',.',
+        paper_bgcolor: '#111a2b', plot_bgcolor: '#111a2b', font: { color: '#94a3b8', family: 'Inter' },
+        hovermode: 'x unified', legend: { orientation: 'h', y: 1.06 },
+        xaxis: { ...eixo, type: 'category', nticks: 8, rangeslider: { visible: false } },
+        yaxis: { ...eixo, domain: [0.32, 1], tickprefix: 'R$ ' },
+        // Volume sobreposto ao preço, ocupando só os 20% inferiores (escala 5x o maior volume)
+        yaxis2: { overlaying: 'y', range: [0, Math.max(...g.volume) * 5 || 1], showgrid: false, showticklabels: false },
+        yaxis3: { ...eixo, domain: [0, 0.24], range: [0, 100], tickvals: [30, 70], title: 'IFR' },
+    };
+    $('chart-container').innerHTML = '';
+    Plotly.newPlot('chart-container', series, layout, { displaylogo: false, responsive: true });
+}
+
 async function carregarAnalise() {
-    const t = document.getElementById('input-ticker').value.toUpperCase().trim();
-    const p = document.getElementById('select-periodo').value;
-    if (!t) return;
+    const ticker = $('input-ticker').value.toUpperCase().trim().replace('.SA', '');
+    const periodo = $('select-periodo').value;
+    if (!ticker) return;
 
-    const fichaContainer = document.getElementById('ficha-container');
-    const chartSection = document.getElementById('chart-section');
-    const chartContainer = document.getElementById('chart-container');
-
-    chartSection.style.display = "block";
-    chartContainer.innerHTML = `<div class="spinner-box" style="min-height: 400px;"><div class="spinner"></div><strong>Carregando dados técnicos...</strong></div>`;
-    
-    if (fichaContainer.innerHTML.includes('placeholder-box') || fichaContainer.innerHTML === '') {
-        fichaContainer.innerHTML = `<div class="spinner-box"><div class="spinner"></div><strong>Obtendo indicadores fundamentalistas...</strong></div>`;
+    $('chart-section').hidden = false;
+    $('chart-container').innerHTML = '<div class="mensagem"><div class="carregador"></div></div>';
+    if (!$('ficha-container').querySelector('.ficha-topo')) {
+        $('ficha-container').innerHTML = '<div class="cartao mensagem"><div class="carregador"></div><p>Carregando indicadores...</p></div>';
     }
 
     try {
-        const res = await fetch(`https://jmpinvestimentos.onrender.com/api/analise?ticker=${t}&periodo=${p}`);
-        const data = await res.json();
-
-        if (data.error) {
-            fichaContainer.innerHTML = `<div class="placeholder-box"><h3 style="color:#ef5350;">Atenção: ${data.error}</h3><p>Verifique se o código do ativo foi digitado corretamente.</p></div>`;
-            chartSection.style.display = "none";
+        const d = await (await fetch(`${API}/api/analise?ticker=${encodeURIComponent(ticker)}&periodo=${encodeURIComponent(periodo)}`)).json();
+        if (d.error) {
+            $('ficha-container').innerHTML = `<div class="cartao vazio"><h3>${escapar(d.error)}</h3><p>Confira o código digitado.</p></div>`;
+            $('chart-section').hidden = true;
             return;
         }
-
-        const f = data.fundamentos;
-        const cd = data.chart_data;
-        const fallbackAvatar = `https://ui-avatars.com/api/?name=${data.ticker.slice(0,2)}&background=1E293B&color=10B981&bold=true&size=64`;
-
-        const fmtM = val => `R$ ${(val / 1000000).toFixed(1)}M`;
-        const fmtP = val => `${(val * 100).toFixed(1)}%`;
-        const fmtX = val => `${val.toFixed(2)}x`;
-
-        const proventosHtml = gerarModuloProventos(f.dy, f.preco, f.dpa_12m);
-
-        fichaContainer.innerHTML = `
-            <div class="raio-x-box">
-                <div class="raio-x-header">
-                    <div class="raio-x-title">
-                        <img src="${data.logo}" alt="${data.ticker}" onerror="this.onerror=null; this.src='${fallbackAvatar}';">
-                        <div>
-                            <h2>${data.nome}</h2>
-                            <span style="color:#94A3B8; font-weight:600;">Código B3: <strong style="color:#10B981">${data.ticker}</strong></span>
-                        </div>
-                    </div>
-                    <div class="raio-x-preco">
-                        <p style="margin:0; color:#94A3B8; font-size:0.8rem; text-transform:uppercase;">Cotação Atual</p>
-                        <h3>R$ ${f.preco.toFixed(2)}</h3>
-                    </div>
-                </div>
-
-                <div class="raio-x-grid">
-                    <div class="raio-x-section">
-                        <h4>Múltiplos e Preço</h4>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">Preço sobre Lucro (P/L)</span><span class="raio-x-val">${fmtX(f.pl)}</span></div>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">Preço sobre Patrimônio (P/VP)</span><span class="raio-x-val">${fmtX(f.pvp)}</span></div>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">EV sobre EBIT</span><span class="raio-x-val">${fmtX(f.evebit)}</span></div>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">Lucro por Ação (LPA)</span><span class="raio-x-val">R$ ${f.lpa.toFixed(2)}</span></div>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">Valor Patrimonial (VPA)</span><span class="raio-x-val">R$ ${f.vpa.toFixed(2)}</span></div>
-                    </div>
-
-                    <div class="raio-x-section">
-                        <h4>Rentabilidade e Eficiência</h4>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">Retorno Operacional (ROIC)</span><span class="raio-x-val" style="color:#34D399;">${fmtP(f.roic)}</span></div>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">Retorno sobre Patrimônio (ROE)</span><span class="raio-x-val">${fmtP(f.roe)}</span></div>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">Margem Líquida</span><span class="raio-x-val">${fmtP(f.margem)}</span></div>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">Dividend Yield (DY)</span><span class="raio-x-val" style="color:#34D399;">${fmtP(f.dy)}</span></div>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">Crescimento da Receita (5a)</span><span class="raio-x-val">${fmtP(f.crescimento)}</span></div>
-                    </div>
-
-                    <div class="raio-x-section">
-                        <h4>Estrutura e Balanço</h4>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">Liquidez Diária</span><span class="raio-x-val">${fmtM(f.liquidez)}</span></div>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">Patrimônio Líquido</span><span class="raio-x-val">${fmtM(f.patrimonio)}</span></div>
-                        <div class="raio-x-item"><span style="color:#94A3B8;">Dívida Líquida sobre Patrimônio</span><span class="raio-x-val">${fmtX(f.divida_patrimonio)}</span></div>
-                    </div>
-                </div>
-
-                ${proventosHtml}
-
-                <div class="raio-x-actions" style="display:flex; gap:12px; justify-content:flex-end; margin-top:20px;">
-                    <a href="${f.links.site_ri}" target="_blank" class="btn-ri">Relações com Investidores</a>
-                    <a href="${f.links.relatorio_oficial}" target="_blank" class="btn-relatorio">Abrir no TradingView</a>
-                </div>
-            </div>
-        `;
-
-        if (window.lucide) lucide.createIcons();
-
-        // Renderização do Gráfico Técnico Plotly
-        if (cd && cd.dates.length > 0) {
-            chartContainer.innerHTML = ''; 
-            
-            const traceCandle = {
-                x: cd.dates, open: cd.open, high: cd.high, low: cd.low, close: cd.close,
-                type: 'candlestick', name: 'Cotação',
-                increasing: { line: { color: '#10B981' } }, decreasing: { line: { color: '#F43F5E' } }, yaxis: 'y'
-            };
-
-            const traceMA50 = {
-                x: cd.dates, y: cd.ma50, type: 'scatter', mode: 'lines',
-                line: { color: '#F59E0B', width: 1.5 }, name: 'MM 50d', yaxis: 'y'
-            };
-            const traceMA200 = {
-                x: cd.dates, y: cd.ma200, type: 'scatter', mode: 'lines',
-                line: { color: '#3B82F6', width: 2 }, name: 'MM 200d', yaxis: 'y'
-            };
-
-            const traceVolume = {
-                x: cd.dates, y: cd.volume, type: 'bar', name: 'Volume',
-                marker: { color: 'rgba(255, 255, 255, 0.1)' }, yaxis: 'y2'
-            };
-
-            const traceRSI = {
-                x: cd.dates, y: cd.rsi, type: 'scatter', mode: 'lines',
-                line: { color: '#A855F7', width: 2 }, name: 'IFR (14)', xaxis: 'x', yaxis: 'y3'
-            };
-
-            const lineSobrecompra = {
-                x: [cd.dates[0], cd.dates[cd.dates.length - 1]], y: [70, 70],
-                type: 'scatter', mode: 'lines', line: { color: '#F43F5E', width: 1, dash: 'dot' },
-                name: 'Sobrecompra (70)', yaxis: 'y3', showlegend: false
-            };
-            const lineSobrevenda = {
-                x: [cd.dates[0], cd.dates[cd.dates.length - 1]], y: [30, 30],
-                type: 'scatter', mode: 'lines', line: { color: '#10B981', width: 1, dash: 'dot' },
-                name: 'Sobrevenda (30)', yaxis: 'y3', showlegend: false
-            };
-
-            const layout = {
-                template: 'plotly_dark', plot_bgcolor: '#0F172A', paper_bgcolor: '#111827',
-                height: 560, margin: { l: 50, r: 20, t: 20, b: 30 },
-                grid: { rows: 2, columns: 1, subplots: [['xy'], ['xy3']], roworder: 'top to bottom' },
-                xaxis: { type: 'category', nticks: 10, gridcolor: '#1E293B', rangeslider: { visible: false } },
-                yaxis: { title: 'Preço (R$)', domain: [0.38, 1], gridcolor: '#1E293B' },
-                yaxis2: { overlaying: 'y', side: 'right', showgrid: false, showticklabels: false },
-                yaxis3: { title: 'IFR (0-100)', domain: [0, 0.26], range: [0, 100], gridcolor: '#1E293B' },
-                legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1 }
-            };
-
-            Plotly.newPlot('chart-container', [traceCandle, traceMA50, traceMA200, traceVolume, traceRSI, lineSobrecompra, lineSobrevenda], layout);
-        }
-    } catch (e) {
-        fichaContainer.innerHTML = `<div class="placeholder-box"><h3 style="color:#ef5350;">Erro ao carregar os dados do ativo</h3></div>`;
+        $('ficha-container').innerHTML = montarFicha(d);
+        if (d.chart_data?.dates.length) desenharGrafico(d.chart_data, periodo);
+        else $('chart-container').innerHTML = '<div class="mensagem">Histórico de preços indisponível para esta ação.</div>';
+    } catch {
+        $('ficha-container').innerHTML = '<div class="cartao vazio"><h3>Não foi possível carregar a ação</h3><p>Tente novamente em alguns segundos.</p></div>';
     }
+    icones();
 }
 
-// Evento de Inicialização
-window.onload = () => {
-    atualizarTooltipMetodo();
-    carregarDados();
-};
+
+/* ------------------------------ INICIALIZAÇÃO ------------------------------ */
+document.addEventListener('DOMContentLoaded', () => {
+    // Abre com a última busca (filtros e resultados) e atualiza em segundo plano
+    const cache = lerCache();
+    preencherFiltros(cache?.filtros || FILTROS_PADRAO);
+    $('data_ref').value = cache?.filtros?.data || '';
+    if ($('data_ref').value) $('data_ref').closest('details').open = true;
+    marcarEstrategia(cache?.filtros?.metodo || 'graham');
+    carregarDados(true);
+    configurarDataReferencia();
+
+    atualizarRelogio();
+    setInterval(atualizarRelogio, 1000);
+    atualizarMercado();
+    setInterval(atualizarMercado, 30000);
+    carregarFeriados().then(atualizarMercado);
+    icones();
+});
