@@ -1,14 +1,16 @@
 """
 Camada de persistência no PostgreSQL (Supabase).
 
-Tabelas:
-    acoes_cache      Último snapshot de cada ação (1 linha por ticker). É o que a
-                     plataforma exibe no dia a dia.
-    historico_acoes  Um snapshot por dia de coleta (o último do dia), usado para
-                     consultas retroativas e para o backtesting da monografia.
-    graficos_cache   Último gráfico consultado de cada ação e período, para a
-                     tela de análise abrir na hora.
+O banco tem dois objetivos e uma tabela para cada um:
 
+    acoes_cache       Última coleta de cada ação (1 linha por ticker). Permite que a
+                      plataforma abra na hora, mesmo antes de consultar a API.
+    historico_diario  Um registro por PREGÃO e ação (chave: data + ticker), com todos
+                      os campos usados pelos filtros e pelos métodos. É a base do
+                      backtesting: o ranking de uma data passada usa somente o que
+                      estava registrado até aquele pregão.
+
+Todos os valores gravados vêm da API (TradingView), sem estimativas.
 A conexão vem exclusivamente da variável de ambiente DATABASE_URL
 (no desenvolvimento local, pode ser definida em um arquivo .env).
 """
@@ -17,12 +19,12 @@ import math
 import os
 import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import psycopg2
 from psycopg2 import pool as pg_pool
-from psycopg2.extras import Json, RealDictCursor, execute_values
+from psycopg2.extras import RealDictCursor, execute_values
 
 try:
     from dotenv import load_dotenv  # opcional, só para desenvolvimento local
@@ -53,6 +55,16 @@ _pool_lock = threading.Lock()
 def agora_b3():
     """Data/hora atual no fuso da B3, sem tzinfo (formato gravado no banco)."""
     return datetime.now(FUSO_B3).replace(tzinfo=None)
+
+
+def pregao_de(momento):
+    """
+    Pregão a que os dados de uma coleta se referem. Antes das 10h a API ainda
+    mostra o fechamento do dia anterior; no sábado e no domingo, o de sexta.
+    (A mesma regra está em SQL na migração de inicializar_banco.)
+    """
+    dia = (momento - timedelta(hours=10)).date()
+    return dia - timedelta(days=max(0, dia.weekday() - 4))
 
 
 # =============================================================================
@@ -137,61 +149,50 @@ def _linha_para_tupla(linha):
 
 
 # =============================================================================
-# CRIAÇÃO E MIGRAÇÃO DAS TABELAS
+# CRIAÇÃO DAS TABELAS (e migração única do formato antigo)
 # =============================================================================
+def _sql_colunas():
+    return ",\n".join(f"{c} {'VARCHAR(150)' if c in COLUNAS_TEXTO[1:] else 'REAL'}" for c in COLUNAS[1:])
+
+
 def inicializar_banco():
     """
-    Cria as tabelas e migra versões antigas para o schema atual.
-
-    `CREATE TABLE IF NOT EXISTS` não altera tabelas já existentes, por isso
-    cada coluna também é adicionada com `ADD COLUMN IF NOT EXISTS`.
+    Cria as tabelas, se não existirem, e migra o formato antigo uma única vez:
+    - historico_acoes (várias linhas por dia, colunas sem uso) vira historico_diario,
+      mantendo só a última coleta completa de cada pregão;
+    - graficos_cache é removida (os gráficos ficam em memória no servidor).
     """
-    def _definicao(coluna):
-        return f"{coluna} VARCHAR(150)" if coluna in COLUNAS_TEXTO else f"{coluna} REAL"
-
-    adicionar = "\n".join(
-        f"ALTER TABLE {tabela} ADD COLUMN IF NOT EXISTS {_definicao(c)};"
-        for tabela in ("acoes_cache", "historico_acoes")
-        for c in COLUNAS[1:]
-    )
-
+    lista = ", ".join(COLUNAS)
+    # Mesma regra de pregao_de(): antes das 10h vale o dia anterior; fim de semana vale sexta
+    pregao_sql = """(d - CASE EXTRACT(ISODOW FROM d) WHEN 6 THEN 1 WHEN 7 THEN 2 ELSE 0 END)"""
     sql = f"""
         CREATE TABLE IF NOT EXISTS acoes_cache (
             ticker VARCHAR(10) PRIMARY KEY,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            {_sql_colunas()},
+            updated_at TIMESTAMP NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS historico_acoes (
-            id SERIAL PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS historico_diario (
+            data DATE NOT NULL,
             ticker VARCHAR(10) NOT NULL,
-            data_coleta TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            {_sql_colunas()},
+            coletado_em TIMESTAMP NOT NULL,
+            PRIMARY KEY (data, ticker)
         );
-        CREATE TABLE IF NOT EXISTS graficos_cache (
-            ticker VARCHAR(10) NOT NULL,
-            periodo VARCHAR(20) NOT NULL,
-            dados JSONB NOT NULL,
-            updated_at TIMESTAMP NOT NULL,
-            PRIMARY KEY (ticker, periodo)
-        );
-        ALTER TABLE acoes_cache ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-        ALTER TABLE historico_acoes ADD COLUMN IF NOT EXISTS data_coleta TIMESTAMP;
-        {adicionar}
 
-        -- Migra dados do schema antigo (data_registro / nome_empresa), se existir
         DO $$
         BEGIN
-            IF EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name = 'historico_acoes' AND column_name = 'data_registro') THEN
-                UPDATE historico_acoes SET data_coleta = data_registro WHERE data_coleta IS NULL;
-            END IF;
-            IF EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name = 'historico_acoes' AND column_name = 'nome_empresa') THEN
-                UPDATE historico_acoes SET nome = nome_empresa WHERE nome IS NULL;
+            IF to_regclass('public.historico_acoes') IS NOT NULL THEN
+                INSERT INTO historico_diario (data, {lista}, coletado_em)
+                SELECT DISTINCT ON (dia, ticker) dia, {lista}, data_coleta
+                FROM (SELECT *, {pregao_sql} AS dia
+                      FROM (SELECT *, (data_coleta - INTERVAL '10 hours')::date AS d FROM historico_acoes) a
+                      WHERE industria IS NOT NULL) h
+                ORDER BY dia, ticker, data_coleta DESC
+                ON CONFLICT (data, ticker) DO NOTHING;
+                DROP TABLE historico_acoes;
             END IF;
         END $$;
-
-        ALTER TABLE historico_acoes ALTER COLUMN data_coleta SET DEFAULT CURRENT_TIMESTAMP;
-        CREATE INDEX IF NOT EXISTS idx_historico_data ON historico_acoes (data_coleta DESC);
-        CREATE INDEX IF NOT EXISTS idx_historico_ticker_data ON historico_acoes (ticker, data_coleta DESC);
+        DROP TABLE IF EXISTS graficos_cache;
     """
     try:
         _executar(lambda cursor: cursor.execute(sql))
@@ -205,45 +206,44 @@ def inicializar_banco():
 # =============================================================================
 def salvar_coleta(df):
     """
-    Grava uma coleta completa do TradingView em uma única transação:
+    Grava uma coleta completa da API em uma única transação:
 
     1. Atualiza `acoes_cache` (UPSERT por ticker) e remove ações que saíram
        da coleta (deslistadas, fracionárias antigas etc.).
-    2. Substitui o snapshot do dia em `historico_acoes`, mantendo apenas o
-       último do dia (a tabela cresce ~1 coleta por dia, não por atualização).
+    2. Registra a coleta em `historico_diario` no pregão a que ela se refere
+       (UPSERT por data + ticker): fica sempre a última coleta de cada pregão.
 
     Retorna True se gravou com sucesso.
     """
     if df.empty:
         return False
 
-    lista_colunas = ", ".join(COLUNAS)
+    lista = ", ".join(COLUNAS)
     atualizacoes = ", ".join(f"{c} = EXCLUDED.{c}" for c in COLUNAS[1:])
     sql_cache = f"""
-        INSERT INTO acoes_cache ({lista_colunas}, updated_at) VALUES %s
+        INSERT INTO acoes_cache ({lista}, updated_at) VALUES %s
         ON CONFLICT (ticker) DO UPDATE SET {atualizacoes}, updated_at = EXCLUDED.updated_at;
     """
     sql_remover_antigas = "DELETE FROM acoes_cache WHERE NOT (ticker = ANY(%s));"
-    sql_limpar_dia = """
-        DELETE FROM historico_acoes
-        WHERE data_coleta >= %s::date AND data_coleta < (%s::date + 1);
+    sql_historico = f"""
+        INSERT INTO historico_diario (data, {lista}, coletado_em) VALUES %s
+        ON CONFLICT (data, ticker) DO UPDATE SET {atualizacoes}, coletado_em = EXCLUDED.coletado_em;
     """
-    sql_historico = f"INSERT INTO historico_acoes ({lista_colunas}, data_coleta) VALUES %s;"
 
     momento = agora_b3()
-    linhas = [_linha_para_tupla(linha) + (momento,) for linha in df.to_dict(orient="records")]
+    pregao = pregao_de(momento)
+    linhas = [_linha_para_tupla(linha) for linha in df.to_dict(orient="records")]
     tickers = [linha[0] for linha in linhas]
 
     def _gravar(cursor):
-        execute_values(cursor, sql_cache, linhas)
+        execute_values(cursor, sql_cache, [linha + (momento,) for linha in linhas])
         if len(tickers) >= MINIMO_ACOES_COLETA_COMPLETA:
             cursor.execute(sql_remover_antigas, (tickers,))
-        cursor.execute(sql_limpar_dia, (momento.date(), momento.date()))
-        execute_values(cursor, sql_historico, linhas)
+        execute_values(cursor, sql_historico, [(pregao,) + linha + (momento,) for linha in linhas])
 
     try:
         _executar(_gravar)
-        print(f"🚀 [BANCO] {len(linhas)} ações gravadas ({momento:%d/%m/%Y %H:%M}).")
+        print(f"🚀 [BANCO] {len(linhas)} ações gravadas (coleta {momento:%d/%m/%Y %H:%M}, pregão {pregao:%d/%m/%Y}).")
         return True
     except Exception as erro:
         print(f"🚨 [BANCO] Erro ao gravar coleta: {erro}")
@@ -254,7 +254,7 @@ def salvar_coleta(df):
 # LEITURA
 # =============================================================================
 def ler_cache():
-    """Lê o último snapshot de todas as ações (tabela acoes_cache)."""
+    """Lê a última coleta de todas as ações (primeira carga da plataforma)."""
     try:
         return _consultar("SELECT * FROM acoes_cache;")
     except Exception as erro:
@@ -264,27 +264,19 @@ def ler_cache():
 
 def ler_historico(data_ref):
     """
-    Lê o snapshot do último DIA DE COLETA até `data_ref` (datetime.date).
+    Lê o registro do último PREGÃO até `data_ref` (datetime.date).
 
-    Usar apenas um único dia evita dois erros comuns de backtesting:
+    Usar apenas um pregão evita dois erros comuns de backtesting:
       - olhar para o futuro (nenhum dado posterior a `data_ref` é usado);
       - misturar dias diferentes (uma ação deslistada meses antes não
         "reaparece" com dados velhos).
 
-    Retorna (registros, dia_utilizado) ou ([], None) se não houver coleta.
+    Retorna (registros, pregao_utilizado) ou ([], None) se não houver registro.
     """
-    # Só considera coletas completas (industria preenchida); registros do formato
-    # antigo não têm LPA, VPA, setor nem dívida e não servem para os métodos.
     sql = f"""
-        WITH ultimo_dia AS (
-            SELECT MAX(data_coleta)::date AS dia
-            FROM historico_acoes
-            WHERE data_coleta < (%s::date + 1) AND industria IS NOT NULL
-        )
-        SELECT DISTINCT ON (h.ticker) {", ".join("h." + c for c in COLUNAS)}, h.data_coleta
-        FROM historico_acoes h, ultimo_dia u
-        WHERE h.data_coleta >= u.dia AND h.data_coleta < (u.dia + 1) AND h.industria IS NOT NULL
-        ORDER BY h.ticker, h.data_coleta DESC;
+        SELECT {", ".join(COLUNAS)}, data
+        FROM historico_diario
+        WHERE data = (SELECT MAX(data) FROM historico_diario WHERE data <= %s);
     """
     try:
         registros = _consultar(sql, (data_ref,))
@@ -293,42 +285,27 @@ def ler_historico(data_ref):
         return [], None
     if not registros:
         return [], None
-    return registros, registros[0]["data_coleta"].date()
+    return registros, registros[0]["data"]
+
+
+def ler_historico_acao(ticker):
+    """Evolução diária dos indicadores de uma ação (um ponto por pregão registrado)."""
+    sql = """
+        SELECT data AS dia, preco, pl, pvp, dy, roe, roic, margem
+        FROM historico_diario WHERE ticker = %s ORDER BY data;
+    """
+    try:
+        return _consultar(sql, (ticker,))
+    except Exception as erro:
+        print(f"🚨 [BANCO] Erro ao ler histórico de {ticker}: {erro}")
+        return []
 
 
 def periodo_historico():
-    """Retorna (primeiro_dia, ultimo_dia) com coletas completas no histórico, ou (None, None)."""
+    """Retorna (primeiro_pregao, ultimo_pregao) registrados, ou (None, None)."""
     try:
-        linha = _consultar(
-            "SELECT MIN(data_coleta)::date AS inicio, MAX(data_coleta)::date AS fim "
-            "FROM historico_acoes WHERE industria IS NOT NULL;"
-        )
+        linha = _consultar("SELECT MIN(data) AS inicio, MAX(data) AS fim FROM historico_diario;")
     except Exception as erro:
         print(f"🚨 [BANCO] Erro ao ler período do histórico: {erro}")
         return None, None
     return (linha[0]["inicio"], linha[0]["fim"]) if linha else (None, None)
-
-
-def ler_grafico(ticker, periodo):
-    """Último gráfico salvo para a ação e o período: (dados, updated_at) ou (None, None)."""
-    try:
-        linha = _consultar(
-            "SELECT dados, updated_at FROM graficos_cache WHERE ticker = %s AND periodo = %s;",
-            (ticker, periodo),
-        )
-    except Exception as erro:
-        print(f"🚨 [BANCO] Erro ao ler gráfico: {erro}")
-        return None, None
-    return (linha[0]["dados"], linha[0]["updated_at"]) if linha else (None, None)
-
-
-def salvar_grafico(ticker, periodo, dados):
-    """Grava (ou substitui) o gráfico consultado."""
-    sql = """
-        INSERT INTO graficos_cache (ticker, periodo, dados, updated_at) VALUES (%s, %s, %s, %s)
-        ON CONFLICT (ticker, periodo) DO UPDATE SET dados = EXCLUDED.dados, updated_at = EXCLUDED.updated_at;
-    """
-    try:
-        _executar(lambda cursor: cursor.execute(sql, (ticker, periodo, Json(dados), agora_b3())))
-    except Exception as erro:
-        print(f"🚨 [BANCO] Erro ao gravar gráfico: {erro}")

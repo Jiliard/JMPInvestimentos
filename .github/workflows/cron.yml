@@ -2,7 +2,9 @@ name: Atualizar Indicadores B3
 
 on:
   schedule:
-    # Roda a cada 30 minutos de segunda a sexta durante o pregão da B3
+    # Coleta e grava no banco a cada 30 min, de segunda a sexta, das 10h às 19h (Brasília).
+    # O GitHub costuma atrasar ou pular execuções; por isso o servidor também coleta
+    # sozinho durante o pregão (rota /api/saude, chamada a cada 10 min por manter_acordado.yml).
     - cron: '*/30 13-22 * * 1-5'
   workflow_dispatch: # Permite execução manual pelo GitHub
 

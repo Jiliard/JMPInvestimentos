@@ -3,7 +3,8 @@ Servidor Flask do JMP Investimentos.
 
 Os dados ficam em memória. Ao subir, o servidor busca no TradingView e no banco
 (Supabase) ao mesmo tempo e usa o que chegar primeiro. Dados com mais de 5 minutos
-são atualizados em segundo plano, e cada coleta fica gravada no banco.
+são atualizados em segundo plano, e cada coleta fica gravada no banco (última
+coleta para a primeira carga + registro diário por pregão para o backtesting).
 
 Rotas:
     GET /api/rankings          ranking por método e filtros (?data=AAAA-MM-DD só para backtesting)
@@ -28,16 +29,18 @@ import database
 import estrategias
 
 app = Flask(__name__)
-CORS(app, expose_headers=["X-Data-Base"])   # o front na Vercel lê a data dos dados neste cabeçalho
+CORS(app, expose_headers=["X-Data-Base"])   # o front na Vercel lê a data dos dados
 
 IDADE_MAXIMA = timedelta(minutes=5)          # dado mais velho que isso é atualizado em segundo plano
-ARQUIVOS_PUBLICOS = {"index.html", "script.js", "style.css"}
+ARQUIVOS_PUBLICOS = {"index.html", "script.js", "style.css", "favicon.svg"}
 
 _cache = {"df": None}                       # dados atuais em memória (responde sem ir ao banco)
 _cache_historico = {}
+_cache_graficos = {}                         # (ticker, período) -> (gráfico, momento da busca)
 _tarefas = set()                             # atualizações em andamento (evita duplicadas)
 _lock = threading.Lock()
 _lock_primeira_carga = threading.Lock()
+_lock_coleta_manual = threading.Lock()
 
 
 # =============================================================================
@@ -53,7 +56,7 @@ def _numero(valor):
 
 
 def _para_json(df):
-    df = df.drop(columns=["updated_at", "data_coleta"], errors="ignore").replace([np.inf, -np.inf], np.nan)
+    df = df.drop(columns=["updated_at", "data"], errors="ignore").replace([np.inf, -np.inf], np.nan)
     return df.astype(object).where(df.notna(), None).to_dict(orient="records")
 
 
@@ -119,8 +122,11 @@ def _coletar_acoes():
 def _carregar_do_banco():
     """Usa a última coleta salva, se a memória ainda estiver vazia (o TradingView não chegou antes)."""
     registros = database.ler_cache()
-    if registros and _cache["df"] is None:
-        _cache["df"] = _montar_df(registros)
+    if not registros or _cache["df"] is not None:
+        return
+    df = _montar_df(registros)
+    if df["industria"].notna().any():   # ignora coletas antigas, gravadas antes das colunas novas
+        _cache["df"] = df
 
 
 def _primeira_carga(limite_segundos=60):
@@ -131,12 +137,17 @@ def _primeira_carga(limite_segundos=60):
     """
     pronto = threading.Event()
     terminadas = []
+    with _lock:
+        _tarefas.add("acoes")               # evita que outra coleta comece enquanto esta roda
 
     def executar(funcao):
         try:
             funcao()
         except Exception as erro:
             print(f"🚨 [PRIMEIRA CARGA] {funcao.__name__}: {erro}")
+        finally:
+            if funcao is _coletar_acoes:
+                _tarefas.discard("acoes")
         terminadas.append(funcao)
         if _cache["df"] is not None or len(terminadas) == 2:
             pronto.set()
@@ -161,6 +172,15 @@ def dados_atuais():
     return df
 
 
+def atualizar_agora(intervalo_minimo=60):
+    """Coleta imediata pedida pelo usuário (ignorada se a última coleta tem menos de 1 minuto)."""
+    with _lock_coleta_manual:
+        df = _cache["df"]
+        if df is not None and (database.agora_b3() - df["updated_at"].max()).total_seconds() < intervalo_minimo:
+            return
+        _coletar_acoes()
+
+
 def dados_historicos(data_ref):
     """(DataFrame, dia usado) do último pregão coletado até `data_ref` (backtesting)."""
     if data_ref not in _cache_historico:
@@ -172,8 +192,14 @@ def dados_historicos(data_ref):
     return _cache_historico[data_ref]
 
 
-database.inicializar_banco()
-threading.Thread(target=dados_atuais, daemon=True).start()   # pré-carrega ao subir o servidor
+def _ao_iniciar():
+    """Migra o banco e pré-carrega os dados fora da inicialização do servidor.
+    Rodar na importação travava o processo do gunicorn além do limite de 30 s."""
+    database.inicializar_banco()
+    dados_atuais()
+
+
+threading.Thread(target=_ao_iniciar, daemon=True).start()
 
 
 # =============================================================================
@@ -209,12 +235,14 @@ def rankings():
         if dia is None:
             inicio, _ = database.periodo_historico()
             if inicio:
-                msg = f"Não há coleta completa até {data_ref:%d/%m/%Y}. O histórico começa em {inicio:%d/%m/%Y}."
+                msg = f"Não há pregão registrado até {data_ref:%d/%m/%Y}. O histórico começa em {inicio:%d/%m/%Y}."
             else:
-                msg = "O histórico completo ainda está vazio: as coletas diárias começam a ser gravadas a partir da implantação desta versão."
+                msg = "O histórico ainda está vazio: o registro diário dos pregões começa após a implantação desta versão."
             return jsonify({"error": msg}), 404
         data_base = dia.isoformat()
     else:
+        if request.args.get("atualizar") == "1":   # botão de atualizar da tela
+            atualizar_agora()
         df = dados_atuais()
         if df is None or df.empty:
             return jsonify([])
@@ -231,10 +259,24 @@ def historico_periodo():
     return jsonify({"inicio": inicio and inicio.isoformat(), "fim": fim and fim.isoformat()})
 
 
+def _em_pregao(momento):
+    """Dia útil entre 10h e 19h (o pregão fecha às 17h ou 18h e a API tem 15 min de atraso)."""
+    return momento.weekday() < 5 and 10 <= momento.hour < 19
+
+
 @app.route("/api/saude")
 def saude():
-    """Rota leve para o monitoramento manter o servidor acordado (não consulta APIs nem banco)."""
-    return jsonify({"status": "ok", "dados_em_memoria": _cache["df"] is not None})
+    """
+    Chamada a cada 10 minutos pelo GitHub Actions (manter_acordado.yml) para o servidor
+    não dormir. Durante o pregão, também dispara em segundo plano uma coleta se os dados
+    tiverem mais de 20 minutos. Assim o servidor grava sozinho o snapshot diário no
+    banco, além da rotina cron.yml (duas rotinas independentes).
+    """
+    df = _cache["df"]
+    agora = database.agora_b3()
+    if _em_pregao(agora) and (df is None or agora - df["updated_at"].max() > timedelta(minutes=20)):
+        _em_segundo_plano("acoes", _coletar_acoes)
+    return jsonify({"status": "ok", "dados_em_memoria": df is not None})
 
 
 @app.route("/api/tickers")
@@ -281,10 +323,30 @@ def montar_grafico(ticker, periodo):
             **{c: [_numero(v) for v in df[c]] for c in colunas}}
 
 
+# Indicadores comparados com o setor e o mercado. Nos múltiplos de preço, a mediana
+# usa só valores positivos (P/L negativo = prejuízo, não "ação barata").
+COMPARADOS = ["pl", "pvp", "evebit", "dy", "roe", "roic", "margem", "divida_patrimonio"]
+MULTIPLOS = {"pl", "pvp", "evebit"}
+
+
+def _comparativo(df, item):
+    """Medianas do setor e do mercado (ações com a liquidez mínima padrão)."""
+    base = df[df["liquidez"] >= estrategias.FILTROS_PADRAO["liq_min"]]
+    setor = base[base["setor"] == item["setor"]]
+
+    def mediana(grupo, coluna):
+        valores = grupo[coluna].dropna()
+        return _numero((valores[valores > 0] if coluna in MULTIPLOS else valores).median())
+
+    return {"empresas_setor": len(setor), "empresas_mercado": len(base),
+            "indicadores": {c: {"setor": mediana(setor, c), "mercado": mediana(base, c)} for c in COMPARADOS}}
+
+
 def _atualizar_grafico(ticker, periodo):
+    """Busca o gráfico e guarda em memória (o banco fica só com os dados do backtesting)."""
     grafico = montar_grafico(ticker, periodo)
     if grafico:
-        database.salvar_grafico(ticker, periodo, grafico)
+        _cache_graficos[(ticker, periodo)] = (grafico, database.agora_b3())
     return grafico
 
 
@@ -308,15 +370,20 @@ def analise():
         "relatorio_oficial": f"https://br.tradingview.com/symbols/BMFBOVESPA-{ticker}/",
     }
 
-    # Gráfico: último salvo no banco na hora; atualização em segundo plano se estiver velho
-    grafico, atualizado_em = database.ler_grafico(ticker, periodo)
+    # Gráfico: o já buscado responde na hora; se estiver velho, atualiza em segundo plano
+    grafico, atualizado_em = _cache_graficos.get((ticker, periodo), (None, None))
     if grafico is None:
         grafico = _atualizar_grafico(ticker, periodo)
     elif _desatualizado(atualizado_em):
         _em_segundo_plano(f"grafico:{ticker}:{periodo}", _atualizar_grafico, ticker, periodo)
 
+    # Evolução dos indicadores registrada no banco (um ponto por dia de coleta)
+    historico = [{"dia": r["dia"].isoformat(), **{c: _numero(r[c]) for c in r if c != "dia"}}
+                 for r in database.ler_historico_acao(ticker)]
+
     return jsonify({"ticker": ticker, "nome": item["nome"], "setor": item["setor"], "logo": item["logo"],
-                    "fundamentos": fundamentos, "chart_data": grafico})
+                    "fundamentos": fundamentos, "chart_data": grafico,
+                    "comparativo": _comparativo(df, item), "historico": historico})
 
 
 

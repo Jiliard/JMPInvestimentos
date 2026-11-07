@@ -43,12 +43,17 @@ CAMPOS_TRADINGVIEW = [
     "debt_to_equity",                     # dívida / patrimônio
 ]
 
-# Lote padrão da B3: 4 caracteres + 1 ou 2 dígitos (PETR4, TAEE11).
-# Exclui o mercado fracionário (PETR4F), que duplicaria a mesma ação.
+# Lote padrão da B3: 4 caracteres + 1 ou 2 dígitos (PETR4, ONCO11).
+# Exclui só o mercado fracionário (PETR4F), que duplicaria a mesma ação.
+# Units (final 11) são mantidas quando a API as classifica como ação. A maioria
+# (TAEE11, SANB11, KLBN11) vem como "fundo/ETF" e SEM indicadores; nesses casos a
+# empresa entra pelas classes ON/PN (TAEE3, TAEE4), que têm os dados completos.
 PADRAO_TICKER = re.compile(r"[A-Z0-9]{4}\d{1,2}")
 
-# Fora do escopo da plataforma (FIIs), segundo a seção 1.6 da monografia.
-INDUSTRIAS_FORA_DO_ESCOPO = {"Real Estate Investment Trusts"}
+# Fundos de investimento ficam fora do escopo (seção 1.6 da monografia): FIIs, FIAGROs,
+# FICs, FIPs e FISETs negociados com final 11, que não têm balanço de empresa.
+INDUSTRIAS_FORA_DO_ESCOPO = {"Real Estate Investment Trusts", "Investment Trusts/Mutual Funds"}
+PADRAO_FUNDO = re.compile(r"\b(fundos?|fic|fiset)\b", re.IGNORECASE)
 
 
 def _numero(valor):
@@ -136,7 +141,7 @@ def buscar_acoes_tradingview():
 
         if not PADRAO_TICKER.fullmatch(str(campos["name"])):
             continue
-        if campos["industry"] in INDUSTRIAS_FORA_DO_ESCOPO:
+        if campos["industry"] in INDUSTRIAS_FORA_DO_ESCOPO or PADRAO_FUNDO.search(campos["description"] or ""):
             continue
         if not _numero(campos["close"]) > 0:
             continue

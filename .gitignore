@@ -1,36 +1,42 @@
 # =============================================================================
-# O repositório contém apenas a aplicação:
-#   app.py, coleta.py, estrategias.py, database.py, cron_updater.py,
-#   index.html, script.js, style.css, requirements.txt e .github/workflows/
+# LISTA DE PERMISSÃO: o repositório contém SOMENTE os arquivos da aplicação.
+# Tudo é ignorado por padrão e cada arquivo necessário é liberado pelo nome.
+# Arquivo novo na pasta (testes, relatórios, dados, segredos) não sobe por engano:
+# para publicar um arquivo novo da aplicação, acrescente uma linha "!/nome" abaixo.
 # =============================================================================
 
-# Relatórios do TCC (monografia, scripts de validação, backtesting e dados): nunca sobem
-/[Rr]elatorio/
-*.tex
-*.pdf
-*.aux
-*.lof
-*.lot
-*.loq
-*.out
-*.toc
-*.synctex.gz
-dados_backtest/
-resultados_backtest/
+# Ignora tudo na raiz do projeto
+/*
 
-# Segredos (senha do banco e chaves)
+# Back-end (Flask no Render)
+!/app.py
+!/coleta.py
+!/estrategias.py
+!/database.py
+!/cron_updater.py
+!/requirements.txt
+
+# Front-end (Vercel)
+!/index.html
+!/script.js
+!/style.css
+!/favicon.svg
+
+# Rotinas agendadas (GitHub Actions): coleta diária e servidor acordado
+!/.github/
+/.github/*
+!/.github/workflows/
+/.github/workflows/*
+!/.github/workflows/*.yml
+
+# Este arquivo
+!/.gitignore
+
+# Proteção extra: nunca publicar, mesmo que alguém libere por engano acima
 .env
 .env.*
-
-# Python
+/[Rr]elatorio/
 __pycache__/
 *.py[cod]
-.venv/
-venv/
-
-# Editores e sistema
-.vscode/
-.idea/
-*.log
-.DS_Store
-Thumbs.db
+*.tex
+*.pdf

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JMP Investimentos</title>
-    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/B3SA.png">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -17,14 +17,17 @@
 <body>
 
 <header class="topo">
-    <div class="marca"><span class="marca-icone"><i data-lucide="trending-up"></i></span> JMP <span>INVESTIMENTOS</span></div>
+    <div class="marca">
+        <img src="favicon.svg" alt="" width="34" height="34">
+        <div class="marca-texto"><strong>JMP</strong><span>INVESTIMENTOS</span></div>
+    </div>
     <nav class="abas" role="tablist">
         <button class="aba-btn ativa" role="tab" data-aba="screener" onclick="mudarAba('screener')">
             <i data-lucide="sliders-horizontal"></i> Filtro de Ações</button>
         <button class="aba-btn" role="tab" data-aba="detalhes" onclick="mudarAba('detalhes')">
             <i data-lucide="line-chart"></i> Análise Detalhada</button>
     </nav>
-    <div id="market-status" class="mercado fechado" aria-live="polite">
+    <div id="market-status" class="mercado fechado" tabindex="0" aria-live="polite" data-tip="">
         <span class="ponto"></span><span id="status-text">B3 Fechada</span>
         <span class="separador">|</span><span id="clock-display" class="numero">--:--:--</span>
     </div>
@@ -35,54 +38,53 @@
     <!-- ================= ABA 1: FILTRO DE AÇÕES ================= -->
     <section id="aba-screener" class="aba ativa">
 
-        <!-- Estratégia -->
+        <!-- Estratégia: a explicação de cada método aparece ao passar o mouse -->
         <div>
             <h2 class="titulo">Estratégia de ranking</h2>
             <div class="estrategias" role="radiogroup" aria-label="Estratégia de ranking">
                 <button class="estrategia ativa" data-metodo="graham" onclick="selecionarEstrategia('graham')">
-                    <strong>Benjamin Graham</strong> <span>• Valor Intrínseco</span></button>
+                    <strong>Benjamin Graham</strong><span class="subtitulo">Valor Intrínseco</span></button>
                 <button class="estrategia" data-metodo="bazin" onclick="selecionarEstrategia('bazin')">
-                    <strong>Décio Bazin</strong> <span>• Preço Teto Dividendos</span></button>
+                    <strong>Décio Bazin</strong><span class="subtitulo">Preço Teto por Dividendos</span></button>
                 <button class="estrategia" data-metodo="greenblatt" onclick="selecionarEstrategia('greenblatt')">
-                    <strong>Joel Greenblatt</strong> <span>• Magic Formula</span></button>
+                    <strong>Joel Greenblatt</strong><span class="subtitulo">Magic Formula</span></button>
                 <button class="estrategia" data-metodo="lynch" onclick="selecionarEstrategia('lynch')">
-                    <strong>Peter Lynch</strong> <span>• Crescimento GARP</span></button>
+                    <strong>Peter Lynch</strong><span class="subtitulo">Crescimento a Preço Razoável</span></button>
             </div>
-            <p id="descricao-metodo" class="descricao"></p>
             <input type="hidden" id="metodo" value="graham">
         </div>
 
-        <!-- Filtros (recolhíveis) -->
-        <details class="cartao filtros" open>
+        <!-- Filtros: um clique em qualquer ponto do título abre ou fecha -->
+        <details id="painel-filtros" class="cartao filtros" open>
             <summary>
                 <span class="titulo-filtros"><i data-lucide="filter"></i> Filtros de Fundamentos
                     <span id="selo-filtros" class="selo" hidden></span></span>
-                <span class="acoes-filtros">
-                    <button class="link" onclick="event.preventDefault(); restaurarPadrao()"><i data-lucide="rotate-ccw"></i> Restaurar padrão</button>
-                    <i data-lucide="chevron-down" class="seta-recolher"></i>
-                </span>
+                <i data-lucide="chevron-down" class="seta-recolher"></i>
             </summary>
             <div class="grade-filtros">
-                <label class="campo"><span>Liquidez mín. (R$) <i class="ajuda" data-tip="Volume financeiro médio diário dos últimos 30 pregões.">?</i></span>
+                <label class="campo"><span>Liquidez mín. (R$) <button type="button" class="info" data-tip="Volume financeiro médio negociado por dia nos últimos 30 pregões. Evita ações difíceis de comprar ou vender." aria-label="Ajuda: liquidez">?</button></span>
                     <input type="number" id="liq_min" step="100000" onchange="carregarDados()"></label>
-                <label class="campo"><span>P/L máximo <i class="ajuda" data-tip="Preço sobre lucro. Empresas com prejuízo são excluídas.">?</i></span>
+                <label class="campo"><span>P/L máximo <button type="button" class="info" data-tip="Preço dividido pelo lucro por ação. Indica quantos anos de lucro atual equivalem ao preço. Empresas com prejuízo são excluídas." aria-label="Ajuda: P/L">?</button></span>
                     <input type="number" id="pl_max" step="1" onchange="carregarDados()"></label>
-                <label class="campo"><span>P/VP máximo <i class="ajuda" data-tip="Preço sobre valor patrimonial.">?</i></span>
+                <label class="campo"><span>P/VP máximo <button type="button" class="info" data-tip="Preço dividido pelo valor patrimonial por ação. Abaixo de 1, a ação custa menos que o patrimônio contábil." aria-label="Ajuda: P/VP">?</button></span>
                     <input type="number" id="pvp_max" step="0.1" onchange="carregarDados()"></label>
-                <label class="campo"><span>DY mínimo (%) <i class="ajuda" data-tip="Dividendos dos últimos 12 meses sobre o preço.">?</i></span>
+                <label class="campo"><span>DY mínimo (%) <button type="button" class="info" data-tip="Dividend Yield: dividendos pagos nos últimos 12 meses divididos pelo preço atual." aria-label="Ajuda: DY">?</button></span>
                     <input type="number" id="dy_min" step="1" onchange="carregarDados()"></label>
-                <label class="campo"><span>ROE mínimo (%) <i class="ajuda" data-tip="Retorno sobre o patrimônio líquido.">?</i></span>
+                <label class="campo"><span>ROE mínimo (%) <button type="button" class="info" data-tip="Retorno sobre o patrimônio: lucro líquido dividido pelo patrimônio dos acionistas." aria-label="Ajuda: ROE">?</button></span>
                     <input type="number" id="roe_min" step="1" onchange="carregarDados()"></label>
-                <label class="campo"><span>ROIC mínimo (%) <i class="ajuda" data-tip="Retorno sobre o capital investido.">?</i></span>
+                <label class="campo"><span>ROIC mínimo (%) <button type="button" class="info" data-tip="Retorno sobre o capital investido: lucro operacional dividido por todo o capital aplicado na operação, inclusive dívidas." aria-label="Ajuda: ROIC">?</button></span>
                     <input type="number" id="roic_min" step="1" onchange="carregarDados()"></label>
-                <label class="campo"><span>Margem mín. (%) <i class="ajuda" data-tip="Lucro líquido sobre a receita.">?</i></span>
+                <label class="campo"><span>Margem mín. (%) <button type="button" class="info" data-tip="Margem líquida: parcela da receita que se transforma em lucro." aria-label="Ajuda: margem">?</button></span>
                     <input type="number" id="margem_min" step="1" onchange="carregarDados()"></label>
-                <label class="campo"><span>Cresc. 5a mín. (%) <i class="ajuda" data-tip="Crescimento anual composto do lucro por ação em 5 anos.">?</i></span>
+                <label class="campo"><span>Cresc. 5a mín. (%) <button type="button" class="info" data-tip="Crescimento médio anual do lucro por ação nos últimos 5 anos (CAGR)." aria-label="Ajuda: crescimento">?</button></span>
                     <input type="number" id="cagr_min" step="1" onchange="carregarDados()"></label>
-                <label class="campo"><span>Dívida/Patr. máx. <i class="ajuda" data-tip="Dívida bruta sobre patrimônio líquido. Patrimônio negativo é excluído.">?</i></span>
+                <label class="campo"><span>Dívida/Patr. máx. <button type="button" class="info" data-tip="Dívida bruta dividida pelo patrimônio líquido. Mede o endividamento. Empresas com patrimônio negativo são excluídas." aria-label="Ajuda: dívida sobre patrimônio">?</button></span>
                     <input type="number" id="divida_max" step="0.1" onchange="carregarDados()"></label>
             </div>
-            <p class="dica">Campo vazio desativa o filtro.</p>
+            <div class="rodape-filtros">
+                <span class="dica">Campo vazio desativa o filtro.</span>
+                <button class="link" onclick="restaurarPadrao()"><i data-lucide="rotate-ccw"></i> Restaurar padrão</button>
+            </div>
         </details>
 
         <!-- Indicadores do resultado -->
@@ -96,8 +98,17 @@
         <!-- Ranking -->
         <div class="cartao sem-padding">
             <div class="tabela-topo">
-                <span id="status-dados" class="status" aria-live="polite"></span>
-                <span class="dica">Clique em uma ação para ver a análise detalhada</span>
+                <div class="atualizacao">
+                    <span id="status-dados" class="status" aria-live="polite"></span>
+                    <button id="botao-atualizar" class="botao-icone pequeno" onclick="carregarDados(false, true)"
+                            title="Buscar os dados mais recentes agora" aria-label="Atualizar dados"><i data-lucide="refresh-cw"></i></button>
+                </div>
+                <div class="menu-colunas">
+                    <span class="dica dica-clique">Clique em uma ação para ver a análise</span>
+                    <button id="botao-colunas" class="botao-secundario" onclick="alternarMenuColunas(event)" aria-haspopup="true" aria-expanded="false">
+                        <i data-lucide="columns-3"></i> Colunas</button>
+                    <div id="lista-colunas" class="lista-colunas" hidden></div>
+                </div>
             </div>
             <div class="tabela-rolagem">
                 <table id="tabela-resultados">
@@ -123,58 +134,67 @@
                 <button class="botao-secundario" onclick="limparDataReferencia()">Usar dados atuais</button>
                 <span id="periodo-historico" class="dica"></span>
             </div>
-            <p class="dica">Recalcula o ranking com o último pregão coletado até a data escolhida, sem usar nenhuma informação posterior.</p>
+            <p class="dica">Recalcula o ranking com os dados da API registrados no banco até a data escolhida, sem usar nenhuma informação posterior.</p>
         </details>
     </section>
 
     <!-- ================= ABA 2: ANÁLISE DETALHADA ================= -->
-    <section id="aba-detalhes" class="aba">
-        <div class="cartao busca">
+    <section id="aba-detalhes" class="aba analise">
+        <div class="busca">
             <i data-lucide="search"></i>
             <input type="text" id="input-ticker" list="lista-tickers" autocomplete="off"
-                   placeholder="Digite o código da ação (ex.: WEGE3, PETR4) e pressione Enter"
+                   placeholder="Buscar ação pelo código (ex.: WEGE3, PETR4) e pressionar Enter"
                    aria-label="Código da ação" onchange="carregarAnalise()">
             <datalist id="lista-tickers"></datalist>
         </div>
 
-        <div class="layout-analise">
-            <div id="ficha-container">
-                <div class="cartao vazio">
-                    <i data-lucide="search"></i>
-                    <h3>Consulte uma ação</h3>
-                    <p>Ou clique em uma ação no ranking.</p>
-                </div>
-            </div>
-
-            <div id="chart-section" class="cartao" hidden>
-                <div class="grafico-topo">
-                    <h3 class="titulo">Preço e indicadores técnicos</h3>
-                    <div class="periodos" role="radiogroup" aria-label="Período do gráfico">
-                        <button class="periodo" data-periodo="30 Dias" onclick="selecionarPeriodo('30 Dias')">30D</button>
-                        <button class="periodo" data-periodo="6 Meses" onclick="selecionarPeriodo('6 Meses')">6M</button>
-                        <button class="periodo ativa" data-periodo="1 Ano" onclick="selecionarPeriodo('1 Ano')">1A</button>
-                        <button class="periodo" data-periodo="5 Anos" onclick="selecionarPeriodo('5 Anos')">5A</button>
-                        <button class="periodo" data-periodo="10 Anos" onclick="selecionarPeriodo('10 Anos')">10A</button>
-                    </div>
-                    <input type="hidden" id="select-periodo" value="1 Ano">
-                </div>
-                <div id="chart-container"></div>
-                <details class="guia">
-                    <summary>Como ler este gráfico</summary>
-                    <ul>
-                        <li><b>Candles:</b> verde quando o preço fechou acima da abertura, vermelho quando fechou abaixo.</li>
-                        <li><b>Médias móveis:</b> laranja = 50 pregões (curto prazo); azul = 200 pregões (longo prazo). Em 5 e 10 anos o gráfico é semanal (10 e 40 semanas).</li>
-                        <li><b>IFR (14):</b> acima de 70 indica possível sobrecompra; abaixo de 30, possível sobrevenda.</li>
-                    </ul>
-                </details>
+        <div id="ficha-container">
+            <div class="cartao vazio">
+                <i data-lucide="search"></i>
+                <h3>Consulte uma ação</h3>
+                <p>Digite o código acima ou clique em uma ação na tela de ranking.</p>
             </div>
         </div>
+
+        <div id="leitura-container"></div>
+
+        <div id="chart-section" class="cartao" hidden>
+            <div class="grafico-topo">
+                <h3 class="titulo">Preço e indicadores técnicos</h3>
+                <div class="periodos" role="radiogroup" aria-label="Período do gráfico">
+                    <button class="periodo" data-periodo="30 Dias" onclick="selecionarPeriodo('30 Dias')">30D</button>
+                    <button class="periodo" data-periodo="6 Meses" onclick="selecionarPeriodo('6 Meses')">6M</button>
+                    <button class="periodo ativa" data-periodo="1 Ano" onclick="selecionarPeriodo('1 Ano')">1A</button>
+                    <button class="periodo" data-periodo="5 Anos" onclick="selecionarPeriodo('5 Anos')">5A</button>
+                    <button class="periodo" data-periodo="10 Anos" onclick="selecionarPeriodo('10 Anos')">10A</button>
+                </div>
+                <input type="hidden" id="select-periodo" value="1 Ano">
+            </div>
+            <div id="resumo-periodo" class="resumo-periodo"></div>
+            <div id="chart-container"></div>
+            <!-- Como ler o gráfico: sempre visível, um bloco por elemento -->
+            <div class="como-ler">
+                <div><span class="legenda-cor" style="background:linear-gradient(90deg,#16c784 50%,#ea3943 50%)"></span>
+                    <b>Candles</b><p>Cada barra é um pregão (ou uma semana em 5A e 10A). Verde: fechou acima da abertura; vermelho: abaixo. As linhas finas mostram a máxima e a mínima.</p></div>
+                <div><span class="legenda-cor" style="background:linear-gradient(90deg,#f59e0b 50%,#60a5fa 50%)"></span>
+                    <b>Médias móveis</b><p>Laranja: média de 50 pregões (tendência curta). Azul: 200 pregões (tendência longa). Preço acima das médias indica tendência de alta.</p></div>
+                <div><span class="legenda-cor" style="background:#2a3448"></span>
+                    <b>Volume</b><p>Barras no rodapé do gráfico: quanto foi negociado. Movimentos com volume alto são mais relevantes do que com volume baixo.</p></div>
+                <div><span class="legenda-cor" style="background:#a78bfa"></span>
+                    <b>IFR (14)</b><p>Força das altas e baixas recentes, de 0 a 100. Acima de 70: possível sobrecompra; abaixo de 30: possível sobrevenda.</p></div>
+            </div>
+            <p class="dica">A análise técnica é apenas ilustrativa e não entra nos rankings, que usam somente os indicadores fundamentalistas.</p>
+        </div>
+
+        <div id="comparativo-container"></div>
+        <div id="indicadores-container"></div>
+        <div id="evolucao-container"></div>
     </section>
 </main>
 
 <footer class="rodape">
-    <p>Plataforma de caráter exclusivamente informativo e educacional. As informações não constituem relatório de análise, consultoria ou recomendação de compra e venda de valores mobiliários (Resolução CVM nº 20/2021). Investimentos em renda variável envolvem risco de perda.</p>
-    <p>Dados: TradingView e Yahoo Finance · © 2026 JMP Investimentos</p>
+    <p>Conteúdo exclusivamente educacional, gerado por modelos quantitativos. Não constitui recomendação de investimento nem relatório de análise (Resolução CVM nº 20/2021). Rentabilidade passada não garante rentabilidade futura.</p>
+    <p class="rodape-fonte">Dados: TradingView (atraso de até 15 min) e Yahoo Finance · Projeto acadêmico — TCC, Sistemas de Informação, UFSC</p>
 </footer>
 
 </body>
