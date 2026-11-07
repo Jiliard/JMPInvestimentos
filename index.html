@@ -87,24 +87,17 @@
             </div>
         </details>
 
-        <!-- Indicadores do resultado -->
-        <div class="kpis">
-            <div class="kpi"><span>Ações filtradas <i data-lucide="layers"></i></span><strong id="kpi-count" class="numero">-</strong></div>
-            <div class="kpi"><span>P/L mediano <i data-lucide="pie-chart"></i></span><strong id="kpi-pl" class="numero">-</strong></div>
-            <div class="kpi"><span>ROIC médio <i data-lucide="zap"></i></span><strong id="kpi-roic" class="numero">-</strong></div>
-            <div class="kpi"><span>DY médio <i data-lucide="coins"></i></span><strong id="kpi-dy" class="numero">-</strong></div>
-        </div>
-
         <!-- Ranking -->
         <div class="cartao sem-padding">
             <div class="tabela-topo">
                 <div class="atualizacao">
+                    <span class="contagem"><strong id="contagem-acoes">-</strong> ações</span>
                     <span id="status-dados" class="status" aria-live="polite"></span>
                     <button id="botao-atualizar" class="botao-icone pequeno" onclick="carregarDados(true)"
                             title="Buscar os dados mais recentes agora" aria-label="Atualizar dados"><i data-lucide="refresh-cw"></i></button>
                 </div>
                 <div class="menu-colunas">
-                    <span class="dica dica-clique">Clique em uma ação para ver a análise</span>
+                    <span class="dica dica-clique">Clique em uma ação para abrir a análise em nova aba</span>
                     <button id="botao-colunas" class="botao-secundario" onclick="alternarMenuColunas(event)" aria-haspopup="true" aria-expanded="false">
                         <i data-lucide="columns-3"></i> Colunas</button>
                     <div id="lista-colunas" class="lista-colunas" hidden></div>

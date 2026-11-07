@@ -383,14 +383,7 @@ function exibir(lista, renderizar = true) {
     }
     dados = lista;
     pagina = 1;
-    const valores = campo => dados.map(d => d[campo]).filter(ehNumero);
-    const media = campo => { const v = valores(campo); return v.length ? v.reduce((a, b) => a + b) / v.length : null; };
-    const pls = valores('pl').sort((a, b) => a - b);
-
-    $('kpi-count').textContent = dados.length;
-    $('kpi-pl').textContent = pls.length ? num(pls[Math.floor(pls.length / 2)], 1, 'x') : '-';
-    $('kpi-roic').textContent = dados.length ? pct(media('roic')) : '-';
-    $('kpi-dy').textContent = dados.length ? pct(media('dy')) : '-';
+    $('contagem-acoes').textContent = dados.length;
     if (renderizar) renderizarTabela();
 }
 
@@ -408,15 +401,21 @@ function renderizarTabela() {
     const inicio = (pagina - 1) * ITENS_POR_PAGINA;
     const fim = Math.min(inicio + ITENS_POR_PAGINA, dados.length);
 
-    $('tabela-resultados').tBodies[0].innerHTML = dados.slice(inicio, fim).map(item => `
-        <tr onclick="abrirAnalise('${escapar(item.ticker)}')" title="Ver análise de ${escapar(item.ticker)}">
-            <td><span class="posicao">${item.rank}º</span></td>
-            <td class="esq"><div class="empresa">${logoOuIniciais(item.logo, item.ticker)}
-                <div><strong>${escapar(item.ticker)}</strong><small>${escapar(item.nome)}</small></div></div></td>
-            ${preco ? `<td>${preco.valor(item)}</td>` : ''}
-            ${doMetodo.map((c, i) => `<td class="coluna-metodo ${i === 0 ? 'destaque' : ''} ${c.classe(item)}">${c.valor(item)}</td>`).join('')}
-            ${outras.map(c => `<td>${c.valor(item)}</td>`).join('')}
-        </tr>`).join('');
+    $('tabela-resultados').tBodies[0].innerHTML = dados.slice(inicio, fim).map(item => {
+        // Cada célula é um link para a análise: o clique abre em nova aba e o botão direito
+        // oferece "Abrir em nova aba/janela". Só a célula da empresa entra na navegação por teclado.
+        const url = linkAnalise(item.ticker);
+        const celula = (conteudo, classe = '', foco = false) => `<td class="${classe}"><a class="celula-link" href="${url}"
+            target="_blank" rel="noopener" ${foco ? '' : 'tabindex="-1"'}>${conteudo}</a></td>`;
+        return `<tr title="Abrir a análise de ${escapar(item.ticker)} em nova aba">
+            ${celula(`<span class="posicao">${item.rank}º</span>`)}
+            ${celula(`<div class="empresa">${logoOuIniciais(item.logo, item.ticker)}
+                <div><strong>${escapar(item.ticker)}</strong><small>${escapar(item.nome)}</small></div></div>`, 'esq', true)}
+            ${preco ? celula(preco.valor(item)) : ''}
+            ${doMetodo.map((c, i) => celula(c.valor(item), `coluna-metodo ${i === 0 ? 'destaque' : ''} ${c.classe(item)}`)).join('')}
+            ${outras.map(c => celula(c.valor(item))).join('')}
+        </tr>`;
+    }).join('');
 
     $('pag-info').textContent = `${inicio + 1}–${fim} de ${dados.length} ações`;
     $('pag-atual').textContent = `${pagina} de ${Math.ceil(dados.length / ITENS_POR_PAGINA)}`;
@@ -452,6 +451,9 @@ async function carregarTickers() {
         $('lista-tickers').innerHTML = tickers.map(t => `<option value="${escapar(t)}">`).join('');
     } catch { /* a busca continua funcionando digitando o código */ }
 }
+
+// Endereço da análise de uma ação (abre direto nela: index.html?acao=PETR4)
+const linkAnalise = ticker => `?acao=${encodeURIComponent(ticker)}`;
 
 function abrirAnalise(ticker) {
     $('input-ticker').value = ticker;
@@ -738,6 +740,7 @@ async function carregarAnalise() {
             extras.forEach(id => { $(id).innerHTML = ''; });
             return;
         }
+        document.title = `${d.ticker} · ${d.nome} | JMP Investimentos`;
         $('ficha-container').innerHTML = montarCabecalhoAcao(d, periodo);
         $('leitura-container').innerHTML = montarLeituraMetodos(d);
         $('comparativo-container').innerHTML = montarComparativo(d);
@@ -770,6 +773,9 @@ document.addEventListener('DOMContentLoaded', () => {
     montarExplicacoesMetodos();
     marcarEstrategia(METODO_PADRAO);
     carregarDados();
+    // Aberta pelo link de uma ação (nova aba): vai direto para a análise dela
+    const acao = new URLSearchParams(location.search).get('acao');
+    if (acao) abrirAnalise(acao.toUpperCase());
     configurarDataReferencia();
 
     // Fecha o menu de colunas ao clicar fora dele ou apertar Esc
