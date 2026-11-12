@@ -1,5 +1,5 @@
 """
-Filtros e métodos de ranqueamento (Seção 2.4 e Tabela 3 da monografia).
+Filtros e métodos de ranqueamento (Seção 2.5 e Quadro 4 da monografia).
 
     Graham      Preço Justo = √(22,5 × LPA × VPA)                Equações (1) e (2)
     Bazin       Preço Teto = DPA 12m ÷ 0,06 (só DY ≥ 6%)          Equação (3)
@@ -10,9 +10,7 @@ Filtros e métodos de ranqueamento (Seção 2.4 e Tabela 3 da monografia).
 import numpy as np
 import pandas as pd
 
-METODOS = ("graham", "bazin", "greenblatt", "lynch")
-
-# Filtros padrão (Tabela 3). Percentuais em %.
+# Filtros padrão (Quadro 4). Percentuais em %.
 FILTROS_PADRAO = {
     "liq_min": 100_000, "pl_max": 20.0, "pvp_max": 2.0, "roe_min": 10.0, "roic_min": 10.0,
     "margem_min": 5.0, "cagr_min": 0.0, "divida_max": 1.5, "dy_min": 0.0,
@@ -88,10 +86,14 @@ def bazin(df):
     return df.sort_values("potencial", ascending=False)
 
 
+def excluida_greenblatt(df):
+    """Instituições financeiras e utilidade pública; sem setor não dá para garantir a regra."""
+    return (df["setor"].isin(GREENBLATT_SETORES_EXCLUIDOS) | df["industria"].isin(GREENBLATT_INDUSTRIAS_EXCLUIDAS)
+            | df["setor"].isna() | df["industria"].isna())
+
+
 def greenblatt(df):
-    excluir = df["setor"].isin(GREENBLATT_SETORES_EXCLUIDOS) | df["industria"].isin(GREENBLATT_INDUSTRIAS_EXCLUIDAS)
-    excluir |= df["setor"].isna() | df["industria"].isna()      # sem setor não dá para garantir a regra
-    df = df[~excluir & (df["evebit"] > 0) & (df["roic"] > 0)].copy()
+    df = df[~excluida_greenblatt(df) & (df["evebit"] > 0) & (df["roic"] > 0)].copy()
     df["pos_roic"] = df["roic"].rank(ascending=False, method="min")
     df["pos_evebit"] = df["evebit"].rank(ascending=True, method="min")
     df["potencial"] = df["pos_roic"] + df["pos_evebit"]           # pontuação (menor é melhor)
@@ -101,14 +103,15 @@ def greenblatt(df):
 def lynch(df):
     df = df[(df["pl"] > 0) & (df["crescimento"] > 0)].copy()
     df["peg_ratio"] = df["pl"] / (df["crescimento"] * 100)
-    df["potencial"] = df["crescimento"]
     return df.sort_values("peg_ratio")
+
+
+METODOS = {"graham": graham, "bazin": bazin, "greenblatt": greenblatt, "lynch": lynch}
 
 
 def ranquear(df, metodo, filtros):
     """Uma ação por empresa -> filtros -> método -> coluna "rank" (1 = melhor)."""
     df = aplicar_filtros(uma_acao_por_empresa(df), filtros)
-    metodos = {"graham": graham, "bazin": bazin, "greenblatt": greenblatt, "lynch": lynch}
-    df = metodos[metodo](df).reset_index(drop=True)
+    df = METODOS[metodo](df).reset_index(drop=True)
     df["rank"] = df.index + 1
     return df

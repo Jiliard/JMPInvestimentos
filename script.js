@@ -9,7 +9,7 @@
 const API_PRODUCAO = 'https://jmpinvestimentos.onrender.com';
 const API = (location.origin === API_PRODUCAO || location.port === '5000') ? '' : API_PRODUCAO;
 
-// Filtros padrão (Tabela 3 da monografia)
+// Filtros padrão (Quadro 4 da monografia)
 const FILTROS_PADRAO = { liq_min: 100000, pl_max: 20, pvp_max: 2, divida_max: 1.5, roe_min: 10,
                          roic_min: 10, margem_min: 5, cagr_min: 0, dy_min: 0 };
 const ITENS_POR_PAGINA = 25;
@@ -345,11 +345,7 @@ async function carregarDados(forcar = false) {
         if (id !== ultimaRequisicao) return;          // o usuário já mudou o filtro
         if (!resposta.ok || !Array.isArray(corpo)) throw new Error(corpo?.error || `Erro ${resposta.status} no servidor.`);
 
-        const dataBase = resposta.headers.get('X-Data-Base') || '';
-        // Com data de referência, o servidor devolve o pregão usado (AAAA-MM-DD)
-        if (filtros.data && !/^\d{4}-\d{2}-\d{2}$/.test(dataBase)) {
-            throw new Error('O servidor não aplicou a data de referência. Os dados atuais não foram exibidos para evitar confusão.');
-        }
+        const dataBase = resposta.headers.get('X-Data-Base') || '';   // com data de referência: o pregão usado
         exibir(corpo);
         status(descreverData(dataBase, !!filtros.data));
         guardarBusca(filtros, corpo, dataBase);
@@ -368,19 +364,7 @@ async function carregarDados(forcar = false) {
     }
 }
 
-// Posição de cada ação num critério (empates recebem a mesma posição, como no back-end)
-function posicoes(lista, campo, crescente) {
-    const valores = lista.map(i => i[campo]);
-    return valores.map(v => 1 + valores.filter(o => crescente ? o < v : o > v).length);
-}
-
 function exibir(lista, renderizar = true) {
-    // Servidores antigos não enviam as posições da Magic Formula: calcula sobre a própria lista
-    if ($('metodo').value === 'greenblatt' && lista.length && lista[0].pos_roic == null) {
-        const roic = posicoes(lista, 'roic', false);
-        const evebit = posicoes(lista, 'evebit', true);
-        lista.forEach((item, i) => { item.pos_roic = roic[i]; item.pos_evebit = evebit[i]; });
-    }
     dados = lista;
     pagina = 1;
     $('contagem-acoes').textContent = dados.length;
@@ -527,6 +511,10 @@ function montarIndicadores(f) {
     </div>`;
 }
 
+// Valor justo de Graham e preço teto de Bazin (mesmas fórmulas do back-end); null quando não se aplicam
+const valorJusto = f => f.lpa > 0 && f.vpa > 0 ? Math.sqrt(22.5 * f.lpa * f.vpa) : null;
+const precoTeto = f => f.dpa_12m > 0 ? f.dpa_12m / 0.06 : null;
+
 // Como a ação aparece em cada método (mesmas fórmulas do back-end, aplicadas aos dados da API)
 function montarLeituraMetodos(d) {
     const f = d.fundamentos;
@@ -535,11 +523,12 @@ function montarLeituraMetodos(d) {
     const caixa = (titulo, ajuda, valor, legenda, seloHtml) => `<div class="metodo-acao">
         <h4><span>${titulo} ${info(ajuda)}</span>${seloHtml}</h4><span class="valor-grande">${valor}</span><p>${legenda}</p></div>`;
 
-    const justo = f.lpa > 0 && f.vpa > 0 ? Math.sqrt(22.5 * f.lpa * f.vpa) : null;
+    const justo = valorJusto(f);
     const margem = justo ? justo / f.preco - 1 : null;
-    const teto = ehNumero(f.dpa_12m) && f.dpa_12m > 0 ? f.dpa_12m / 0.06 : null;
+    const teto = precoTeto(f);
     const peg = f.pl > 0 && f.crescimento > 0 ? f.pl / (f.crescimento * 100) : null;
-    const excluidaGreenblatt = d.setor === 'Utilities' || !ehNumero(f.roic) || !ehNumero(f.evebit);
+    // Exclusão setorial decidida pelo back-end (bancos, seguradoras e utilidade pública)
+    const excluidaGreenblatt = d.excluida_greenblatt || !ehNumero(f.roic) || !ehNumero(f.evebit);
     const boaRoic = f.roic > (mercado.roic?.mercado ?? Infinity);
     const barataEv = f.evebit > 0 && f.evebit < (mercado.evebit?.mercado ?? -Infinity);
 
@@ -576,9 +565,8 @@ function montarLeituraMetodos(d) {
 
 // Gráfico: cotação x valor justo de Graham x preço teto de Bazin
 function desenharGraficoMetodos(f) {
-    const justo = f.lpa > 0 && f.vpa > 0 ? Math.sqrt(22.5 * f.lpa * f.vpa) : null;
-    const teto = f.dpa_12m > 0 ? f.dpa_12m / 0.06 : null;
-    const barras = [['Cotação atual', f.preco], ['Valor justo (Graham)', justo], ['Preço teto (Bazin)', teto]].filter(b => ehNumero(b[1]));
+    const barras = [['Cotação atual', f.preco], ['Valor justo (Graham)', valorJusto(f)], ['Preço teto (Bazin)', precoTeto(f)]]
+        .filter(b => ehNumero(b[1]));
     if (!$('grafico-metodos') || barras.length < 2) return;
     Plotly.newPlot('grafico-metodos', [{
         type: 'bar', orientation: 'h', y: barras.map(b => b[0]), x: barras.map(b => b[1]),

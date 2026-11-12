@@ -1,22 +1,28 @@
 name: Atualizar Indicadores B3
 
+# Rotina de reserva, independente do servidor: coleta os indicadores e grava o pregão
+# direto no banco (secret DATABASE_URL). Depois das 19h, também grava o fechamento do
+# Ibovespa e os eventos das ações. Se a coleta direta falhar, o motivo aparece como
+# aviso no resumo da execução e a coleta é pedida ao servidor (Render).
+# A execução só falha (e o GitHub avisa por e-mail) se os dois caminhos falharem.
+# A rotina principal é o agendamento no próprio Supabase.
+
 on:
   schedule:
-    # Coleta e grava no banco a cada 30 min, de segunda a sexta, das 10h às 19h (Brasília).
-    # O GitHub costuma atrasar ou pular execuções; por isso o servidor também coleta
-    # sozinho durante o pregão (rota /api/saude, chamada a cada 10 min por manter_acordado.yml).
+    # A cada 30 min, de segunda a sexta, das 10h às 19h30 (Brasília).
     - cron: '*/30 13-22 * * 1-5'
   workflow_dispatch: # Permite execução manual pelo GitHub
 
 jobs:
   update-cache:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - name: Baixar código do repositório
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configurar Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -24,7 +30,16 @@ jobs:
       - name: Instalar dependências
         run: pip install -r requirements.txt
 
-      - name: Executar atualização
+      - name: Coleta direta no banco
+        id: direta
+        continue-on-error: true
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python cron_updater.py
+
+      - name: Coleta pelo servidor (reserva)
+        if: steps.direta.outcome == 'failure'
+        run: |
+          # O servidor gratuito pode estar dormindo: o primeiro acesso leva até ~1 min.
+          curl -sS --fail-with-body --retry 3 --retry-delay 30 --retry-all-errors \
+               --max-time 180 https://jmpinvestimentos.onrender.com/api/coletar

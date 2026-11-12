@@ -2,7 +2,8 @@
 Coleta de dados nas APIs financeiras.
 
 - TradingView Scanner: indicadores fundamentalistas de todas as ações da B3.
-- Yahoo Finance: histórico de cotações para o gráfico técnico.
+- Yahoo Finance: histórico de cotações para o gráfico técnico e, para o backtesting,
+  fechamento do Ibovespa e eventos das ações (dividendos e desdobramentos).
 
 Regra geral: os indicadores vêm prontos da API. Quando a API não traz um
 dado, ele fica como NaN (exibido como "N/D") e nunca é estimado, copiado ou zerado.
@@ -11,6 +12,7 @@ percentual -> fração, DPA = preço x DY e liquidez em R$ = volume médio x pre
 """
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pandas as pd
@@ -194,3 +196,53 @@ def buscar_cotacoes_yahoo(simbolo, inicio_ts, fim_ts, intervalo):
     # Candles sem fechamento são descartados. Abertura, máxima, mínima e volume ausentes
     # ficam vazios (o candle não é desenhado), sem copiar outro valor no lugar.
     return df.dropna(subset=["close"]).reset_index(drop=True)
+
+
+# =============================================================================
+# YAHOO FINANCE: IBOVESPA E EVENTOS (BACKTESTING)
+# =============================================================================
+def _data_b3(timestamp):
+    """Timestamp Unix -> data no fuso da B3 (o Yahoo marca eventos à 0h de Brasília)."""
+    return pd.to_datetime(timestamp, unit="s", utc=True).tz_convert("America/Sao_Paulo").date()
+
+
+def buscar_eventos_yahoo(ticker, dias=40):
+    """
+    Dividendos (R$ por ação, na data ex) e desdobramentos/grupamentos (ações novas por
+    ação antiga: 2 = desdobramento 1:2; 0,1 = grupamento 10:1) dos últimos `dias`.
+    Com eles e o preço bruto gravado a cada pregão, o retorno total do backtesting é
+    calculado sem depender de preços "ajustados", que mudam retroativamente.
+    Retorna uma lista de (data, ticker, tipo, valor); vazia se não houver eventos ou em falha.
+    """
+    url = f"{URL_YAHOO.format(simbolo=ticker + '.SA')}?range={dias}d&interval=1d&events=div%7Csplit"
+    try:
+        resposta = requests.get(url, headers=CABECALHOS, timeout=10)
+        resposta.raise_for_status()
+        eventos = (((resposta.json().get("chart") or {}).get("result") or [{}])[0] or {}).get("events") or {}
+    except Exception as erro:
+        print(f"🚨 [YAHOO] Falha ao buscar eventos de {ticker}: {erro}")
+        return []
+    linhas = [(_data_b3(e["date"]), ticker, "dividendo", _numero(e.get("amount")))
+              for e in (eventos.get("dividends") or {}).values()]
+    linhas += [(_data_b3(e["date"]), ticker, "desdobramento", _numero(e.get("numerator")) / _numero(e.get("denominator")))
+               for e in (eventos.get("splits") or {}).values()]
+    return [linha for linha in linhas if np.isfinite(linha[3]) and linha[3] > 0]
+
+
+def buscar_complementos_backtesting(tickers, dias=40):
+    """
+    Fechamentos diários do Ibovespa e eventos de todas as ações dos últimos `dias`.
+    Busca uma janela de vários dias para recuperar sozinho dias em que a rotina não rodou.
+    Retorna (lista de (data, fechamento do Ibovespa), lista de eventos).
+    """
+    agora = pd.Timestamp.now(tz="America/Sao_Paulo")
+    ibov = buscar_cotacoes_yahoo("^BVSP", (agora - pd.Timedelta(days=dias)).timestamp(), agora.timestamp(), "1d")
+    hoje = agora.date()
+    fechado = agora.hour >= 19            # o fechamento de hoje só é definitivo depois do pregão
+    fechamentos = [] if ibov.empty else [
+        (d.date(), float(c)) for d, c in zip(ibov["date"], ibov["close"]) if d.date() < hoje or (d.date() == hoje and fechado)]
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        eventos = [e for lista in executor.map(lambda t: buscar_eventos_yahoo(t, dias), tickers) for e in lista]
+    print(f"✅ [YAHOO] Ibovespa: {len(fechamentos)} fechamentos; eventos: {len(eventos)} em {len(tickers)} ações.")
+    return fechamentos, eventos

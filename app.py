@@ -12,6 +12,7 @@ Rotas:
     GET /api/tickers           lista de tickers para a busca
     GET /api/analise           ficha da empresa e gráfico técnico
     GET /api/saude             verificação leve usada para manter o servidor acordado
+    GET /api/coletar           coleta e grava agora (rotina cron.yml)
 """
 
 import threading
@@ -25,6 +26,7 @@ from flask import Flask, abort, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 import coleta
+import cron_updater
 import database
 import estrategias
 
@@ -34,7 +36,8 @@ CORS(app, expose_headers=["X-Data-Base"])   # o front na Vercel lê a data dos d
 IDADE_MAXIMA = timedelta(minutes=5)          # dado mais velho que isso é atualizado em segundo plano
 ARQUIVOS_PUBLICOS = {"index.html", "script.js", "style.css", "favicon.svg"}
 
-_cache = {"df": None}                       # dados atuais em memória (responde sem ir ao banco)
+_cache = {"df": None, "gravou_no_banco": False,  # dados atuais em memória (responde sem ir ao banco)
+          "complementos_em": None}                # dia em que o Ibovespa e os eventos foram gravados
 _cache_historico = {}
 _cache_graficos = {}                         # (ticker, período) -> (gráfico, momento da busca)
 _tarefas = set()                             # atualizações em andamento (evita duplicadas)
@@ -46,13 +49,7 @@ _lock_coleta_manual = threading.Lock()
 # =============================================================================
 # AUXILIARES
 # =============================================================================
-def _numero(valor):
-    """float válido ou None (NaN/infinito/vazio viram None, para gerar JSON válido)."""
-    try:
-        valor = float(valor)
-    except (TypeError, ValueError):
-        return None
-    return valor if np.isfinite(valor) else None
+_numero = database.numero_ou_none   # NaN/infinito/vazio viram None, para gerar JSON válido
 
 
 def _para_json(df):
@@ -61,11 +58,8 @@ def _para_json(df):
 
 
 def _montar_df(registros):
-    """DataFrame padronizado a partir do banco ou da coleta."""
-    df = pd.DataFrame(registros)
-    for coluna in database.COLUNAS:      # garante todas as colunas, mesmo em registros antigos
-        if coluna not in df:
-            df[coluna] = None
+    """DataFrame padronizado a partir do banco (lista de registros) ou da coleta (DataFrame)."""
+    df = pd.DataFrame(registros, copy=True)   # cópia: não altera o DataFrame da coleta
     for coluna in database.COLUNAS_NUMERICAS:
         df[coluna] = pd.to_numeric(df[coluna], errors="coerce")
     df["logo"] = "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/" + df["ticker"].str[:4] + ".png"
@@ -73,7 +67,7 @@ def _montar_df(registros):
 
 
 def _ler_filtros(args):
-    """Parâmetro ausente = padrão da Tabela 3; parâmetro vazio = filtro desligado."""
+    """Parâmetro ausente = padrão do Quadro 4; parâmetro vazio = filtro desligado."""
     return {chave: (padrao if chave not in args else _numero(args.get(chave)))
             for chave, padrao in estrategias.FILTROS_PADRAO.items()}
 
@@ -112,21 +106,18 @@ def _coletar_acoes():
     bruto = coleta.buscar_acoes_tradingview()
     if bruto.empty:
         return None
-    df = _montar_df(bruto.to_dict(orient="records"))
+    df = _montar_df(bruto)
     df["updated_at"] = database.agora_b3()
     _cache["df"] = df   # memória primeiro: quem espera recebe na hora
-    database.salvar_coleta(bruto)
+    _cache["gravou_no_banco"] = database.salvar_coleta(bruto)
     return df
 
 
 def _carregar_do_banco():
     """Usa a última coleta salva, se a memória ainda estiver vazia (o TradingView não chegou antes)."""
     registros = database.ler_cache()
-    if not registros or _cache["df"] is not None:
-        return
-    df = _montar_df(registros)
-    if df["industria"].notna().any():   # ignora coletas antigas, gravadas antes das colunas novas
-        _cache["df"] = df
+    if registros and _cache["df"] is None:
+        _cache["df"] = _montar_df(registros)
 
 
 def _primeira_carga(limite_segundos=60):
@@ -167,18 +158,22 @@ def dados_atuais():
     df = _cache["df"]
     if df is None:
         return None
-    if _desatualizado(df["updated_at"].max()) or df["industria"].isna().all():
+    if _desatualizado(df["updated_at"].max()):
         _em_segundo_plano("acoes", _coletar_acoes)
     return df
 
 
-def atualizar_agora(intervalo_minimo=60):
-    """Coleta imediata pedida pelo usuário (ignorada se a última coleta tem menos de 1 minuto)."""
+def atualizar_agora(intervalo_minimo):
+    """
+    Coleta imediata (botão de atualizar da tela e rotina cron.yml). Se a última coleta
+    gravada no banco tem menos de `intervalo_minimo`, reaproveita-a. Retorna os dados
+    ou None se a API não respondeu.
+    """
     with _lock_coleta_manual:
         df = _cache["df"]
-        if df is not None and (database.agora_b3() - df["updated_at"].max()).total_seconds() < intervalo_minimo:
-            return
-        _coletar_acoes()
+        if df is not None and _cache["gravou_no_banco"] and database.agora_b3() - df["updated_at"].max() < intervalo_minimo:
+            return df
+        return _coletar_acoes()
 
 
 def dados_historicos(data_ref):
@@ -242,11 +237,11 @@ def rankings():
         data_base = dia.isoformat()
     else:
         if request.args.get("atualizar") == "1":   # botão de atualizar da tela
-            atualizar_agora()
+            atualizar_agora(timedelta(minutes=1))
         df = dados_atuais()
         if df is None or df.empty:
             return jsonify([])
-        data_base = pd.to_datetime(df["updated_at"]).max().strftime("%Y-%m-%dT%H:%M")
+        data_base = f"{df['updated_at'].max():%Y-%m-%dT%H:%M}"
 
     resposta = jsonify(_para_json(estrategias.ranquear(df, metodo, _ler_filtros(request.args))))
     resposta.headers["X-Data-Base"] = data_base
@@ -267,16 +262,42 @@ def _em_pregao(momento):
 @app.route("/api/saude")
 def saude():
     """
-    Chamada a cada 10 minutos pelo GitHub Actions (manter_acordado.yml) para o servidor
-    não dormir. Durante o pregão, também dispara em segundo plano uma coleta se os dados
-    tiverem mais de 20 minutos. Assim o servidor grava sozinho o snapshot diário no
-    banco, além da rotina cron.yml (duas rotinas independentes).
+    Chamada a cada 10 minutos pela rotina agendada no Supabase (pg_cron) e, como reserva,
+    pelo GitHub Actions (manter_acordado.yml), para o servidor não dormir. Durante o
+    pregão, também dispara em segundo plano uma coleta se os dados tiverem mais de
+    20 minutos. Depois das 19h dos dias úteis, grava uma vez o fechamento do Ibovespa
+    e os eventos das ações. Assim o servidor grava sozinho o registro diário no banco.
     """
     df = _cache["df"]
     agora = database.agora_b3()
     if _em_pregao(agora) and (df is None or agora - df["updated_at"].max() > timedelta(minutes=20)):
         _em_segundo_plano("acoes", _coletar_acoes)
+    if agora.weekday() < 5 and agora.hour >= 19 and _cache["complementos_em"] != agora.date():
+        _em_segundo_plano("complementos", _registrar_complementos, agora.date())
     return jsonify({"status": "ok", "dados_em_memoria": df is not None})
+
+
+def _registrar_complementos(dia):
+    if cron_updater.registrar_complementos():
+        _cache["complementos_em"] = dia
+
+
+@app.route("/api/coletar")
+def coletar():
+    """
+    Coleta na API e grava no banco agora, e responde se deu certo. Chamada pela rotina
+    cron.yml do GitHub Actions, que assim acompanha a gravação sem acessar o banco nem
+    o TradingView diretamente. Se a última coleta tiver menos de 5 minutos, apenas
+    confirma (evita coletas repetidas em sequência).
+    """
+    df = atualizar_agora(IDADE_MAXIMA)
+    if df is None:
+        return jsonify({"status": "erro", "motivo": "a API do TradingView não retornou dados"}), 503
+    if not _cache["gravou_no_banco"]:
+        return jsonify({"status": "erro", "motivo": "falha ao gravar no banco"}), 503
+    momento = df["updated_at"].max()
+    return jsonify({"status": "ok", "acoes": len(df), "coleta": f"{momento:%d/%m/%Y %H:%M}",
+                    "pregao": f"{database.pregao_de(momento):%d/%m/%Y}"})
 
 
 @app.route("/api/tickers")
@@ -395,9 +416,9 @@ def analise():
                  for r in database.ler_historico_acao(ticker)]
 
     return jsonify({"ticker": ticker, "nome": item["nome"], "setor": item["setor"], "logo": item["logo"],
+                    "excluida_greenblatt": bool(estrategias.excluida_greenblatt(empresa).iloc[0]),
                     "fundamentos": fundamentos, "chart_data": grafico,
                     "comparativo": _comparativo(df, item), "historico": historico})
-
 
 
 if __name__ == "__main__":

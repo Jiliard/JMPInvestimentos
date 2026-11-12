@@ -1,7 +1,7 @@
 """
 Camada de persistência no PostgreSQL (Supabase).
 
-O banco tem dois objetivos e uma tabela para cada um:
+Tabelas:
 
     acoes_cache       Última coleta de cada ação (1 linha por ticker). Permite que a
                       plataforma abra na hora, mesmo antes de consultar a API.
@@ -9,8 +9,11 @@ O banco tem dois objetivos e uma tabela para cada um:
                       os campos usados pelos filtros e pelos métodos. É a base do
                       backtesting: o ranking de uma data passada usa somente o que
                       estava registrado até aquele pregão.
+    indice_diario     Fechamento do Ibovespa em cada pregão (referência do backtesting).
+    eventos_acoes     Dividendos e desdobramentos/grupamentos por data ex. Com o preço
+                      bruto do histórico, permitem calcular o retorno total das carteiras.
 
-Todos os valores gravados vêm da API (TradingView), sem estimativas.
+Todos os valores gravados vêm das APIs (TradingView e Yahoo Finance), sem estimativas.
 A conexão vem exclusivamente da variável de ambiente DATABASE_URL
 (no desenvolvimento local, pode ser definida em um arquivo .env).
 """
@@ -62,7 +65,6 @@ def pregao_de(momento):
     """
     Pregão a que os dados de uma coleta se referem. Antes das 10h a API ainda
     mostra o fechamento do dia anterior; no sábado e no domingo, o de sexta.
-    (A mesma regra está em SQL na migração de inicializar_banco.)
     """
     dia = (momento - timedelta(hours=10)).date()
     return dia - timedelta(days=max(0, dia.weekday() - 4))
@@ -133,8 +135,8 @@ def _consultar(sql, parametros=None):
     return _executar(_buscar, dict_cursor=True) or []
 
 
-def _numero_ou_null(valor):
-    """Converte para float; NaN, infinito e None viram NULL no banco."""
+def numero_ou_none(valor):
+    """Converte para float; NaN, infinito e vazio viram None (NULL no banco, null no JSON)."""
     try:
         numero = float(valor)
     except (TypeError, ValueError):
@@ -145,27 +147,19 @@ def _numero_ou_null(valor):
 def _linha_para_tupla(linha):
     """Converte uma linha do DataFrame na tupla de valores esperada pelos INSERTs."""
     textos = tuple(None if linha.get(c) is None else str(linha.get(c)) for c in COLUNAS_TEXTO)
-    numeros = tuple(_numero_ou_null(linha.get(c)) for c in COLUNAS_NUMERICAS)
+    numeros = tuple(numero_ou_none(linha.get(c)) for c in COLUNAS_NUMERICAS)
     return textos + numeros
 
 
 # =============================================================================
-# CRIAÇÃO DAS TABELAS (e migração única do formato antigo)
+# CRIAÇÃO DAS TABELAS
 # =============================================================================
 def _sql_colunas():
     return ",\n".join(f"{c} {'VARCHAR(150)' if c in COLUNAS_TEXTO[1:] else 'REAL'}" for c in COLUNAS[1:])
 
 
 def inicializar_banco():
-    """
-    Cria as tabelas, se não existirem, e migra o formato antigo uma única vez:
-    - historico_acoes (várias linhas por dia, colunas sem uso) vira historico_diario,
-      mantendo só a última coleta completa de cada pregão;
-    - graficos_cache é removida (os gráficos ficam em memória no servidor).
-    """
-    lista = ", ".join(COLUNAS)
-    # Mesma regra de pregao_de(): antes das 10h vale o dia anterior; fim de semana vale sexta
-    pregao_sql = """(d - CASE EXTRACT(ISODOW FROM d) WHEN 6 THEN 1 WHEN 7 THEN 2 ELSE 0 END)"""
+    """Cria as tabelas, se não existirem, e agenda a rotina diária no Supabase."""
     sql = f"""
         CREATE TABLE IF NOT EXISTS acoes_cache (
             ticker VARCHAR(10) PRIMARY KEY,
@@ -179,21 +173,19 @@ def inicializar_banco():
             coletado_em TIMESTAMP NOT NULL,
             PRIMARY KEY (data, ticker)
         );
-
-        DO $$
-        BEGIN
-            IF to_regclass('public.historico_acoes') IS NOT NULL THEN
-                INSERT INTO historico_diario (data, {lista}, coletado_em)
-                SELECT DISTINCT ON (dia, ticker) dia, {lista}, data_coleta
-                FROM (SELECT *, {pregao_sql} AS dia
-                      FROM (SELECT *, (data_coleta - INTERVAL '10 hours')::date AS d FROM historico_acoes) a
-                      WHERE industria IS NOT NULL) h
-                ORDER BY dia, ticker, data_coleta DESC
-                ON CONFLICT (data, ticker) DO NOTHING;
-                DROP TABLE historico_acoes;
-            END IF;
-        END $$;
-        DROP TABLE IF EXISTS graficos_cache;
+        CREATE TABLE IF NOT EXISTS indice_diario (
+            data DATE PRIMARY KEY,
+            ibovespa REAL NOT NULL,
+            coletado_em TIMESTAMP NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS eventos_acoes (
+            data DATE NOT NULL,                 -- data ex (dividendo) ou de vigência (desdobramento)
+            ticker VARCHAR(10) NOT NULL,
+            tipo VARCHAR(13) NOT NULL CHECK (tipo IN ('dividendo', 'desdobramento')),
+            valor REAL NOT NULL,                -- R$ por ação ou ações novas por ação antiga
+            coletado_em TIMESTAMP NOT NULL,
+            PRIMARY KEY (data, ticker, tipo)
+        );
     """
     try:
         _executar(lambda cursor: cursor.execute(sql))
@@ -213,7 +205,8 @@ def agendar_rotina():
       - durante o pregão, faz o servidor coletar na API e gravar o dia no banco.
 
     O agendador do banco é mais confiável que o do GitHub Actions, que atrasa
-    ou pula execuções; o cron.yml continua como segunda rotina, independente.
+    ou pula execuções; como reserva, o cron.yml pede uma coleta ao servidor
+    (/api/coletar) e o manter_acordado.yml chama a mesma rota /api/saude.
     `cron.schedule` com o mesmo nome substitui o agendamento: pode rodar sempre.
     """
     sql = f"""
@@ -282,6 +275,36 @@ def salvar_coleta(df):
         return False
 
 
+def salvar_complementos(fechamentos, eventos):
+    """
+    Grava os fechamentos do Ibovespa e os eventos das ações (UPSERT: rodar de novo
+    só atualiza). Retorna True se gravou com sucesso.
+    """
+    momento = agora_b3()
+
+    def _gravar(cursor):
+        if fechamentos:
+            execute_values(cursor, """
+                INSERT INTO indice_diario (data, ibovespa, coletado_em) VALUES %s
+                ON CONFLICT (data) DO UPDATE SET ibovespa = EXCLUDED.ibovespa, coletado_em = EXCLUDED.coletado_em;
+            """, [f + (momento,) for f in fechamentos])
+        if eventos:
+            # Um mesmo dia pode trazer o evento repetido: fica o último
+            unicos = {e[:3]: e for e in eventos}
+            execute_values(cursor, """
+                INSERT INTO eventos_acoes (data, ticker, tipo, valor, coletado_em) VALUES %s
+                ON CONFLICT (data, ticker, tipo) DO UPDATE SET valor = EXCLUDED.valor, coletado_em = EXCLUDED.coletado_em;
+            """, [e + (momento,) for e in unicos.values()])
+
+    try:
+        _executar(_gravar)
+        print(f"🚀 [BANCO] Ibovespa ({len(fechamentos)} dias) e eventos ({len(eventos)}) gravados.")
+        return True
+    except Exception as erro:
+        print(f"🚨 [BANCO] Erro ao gravar Ibovespa e eventos: {erro}")
+        return False
+
+
 def _sem_pregao(cursor, pregao, linhas):
     """
     True se a coleta repete os preços do último pregão registrado: em feriado de dia
@@ -310,6 +333,15 @@ def ler_cache():
         return _consultar("SELECT * FROM acoes_cache;")
     except Exception as erro:
         print(f"🚨 [BANCO] Erro ao ler cache: {erro}")
+        return []
+
+
+def tickers_atuais():
+    """Tickers da última coleta (as ações negociadas hoje)."""
+    try:
+        return [linha["ticker"] for linha in _consultar("SELECT ticker FROM acoes_cache ORDER BY ticker;")]
+    except Exception as erro:
+        print(f"🚨 [BANCO] Erro ao ler tickers: {erro}")
         return []
 
 
