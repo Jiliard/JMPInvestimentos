@@ -35,7 +35,7 @@ jobs:
         continue-on-error: true
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python cron_updater.py
+        run: python rotina_diaria.py
 
       - name: Coleta pelo servidor (reserva)
         if: steps.direta.outcome == 'failure'

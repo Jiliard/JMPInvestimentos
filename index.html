@@ -22,21 +22,21 @@
         <div class="marca-texto"><strong>JMP</strong><span>INVESTIMENTOS</span></div>
     </div>
     <nav class="abas" role="tablist">
-        <button class="aba-btn ativa" role="tab" data-aba="screener" onclick="mudarAba('screener')">
+        <button class="botao-aba ativa" role="tab" data-aba="ranking" onclick="mudarAba('ranking')">
             <i data-lucide="sliders-horizontal"></i> Filtro de Ações</button>
-        <button class="aba-btn" role="tab" data-aba="detalhes" onclick="mudarAba('detalhes')">
+        <button class="botao-aba" role="tab" data-aba="detalhes" onclick="mudarAba('detalhes')">
             <i data-lucide="line-chart"></i> Análise Detalhada</button>
     </nav>
-    <div id="market-status" class="mercado fechado" tabindex="0" aria-live="polite" data-tip="">
-        <span class="ponto"></span><span id="status-text">B3 Fechada</span>
-        <span class="separador">|</span><span id="clock-display" class="numero">--:--:--</span>
+    <div id="status-mercado" class="mercado fechado" tabindex="0" aria-live="polite" data-tip="">
+        <span class="ponto"></span><span id="texto-mercado">B3 Fechada</span>
+        <span class="separador">|</span><span id="relogio" class="numero">--:--:--</span>
     </div>
 </header>
 
 <main class="conteudo">
 
     <!-- ================= ABA 1: FILTRO DE AÇÕES ================= -->
-    <section id="aba-screener" class="aba ativa">
+    <section id="aba-ranking" class="aba ativa">
 
         <!-- Estratégia: a explicação de cada método aparece ao passar o mouse -->
         <div>
@@ -110,10 +110,10 @@
                 </table>
             </div>
             <div class="paginacao">
-                <span id="pag-info">-</span>
+                <span id="info-paginacao">-</span>
                 <div>
                     <button class="botao-icone" onclick="mudarPagina(-1)" aria-label="Página anterior"><i data-lucide="chevron-left"></i></button>
-                    <span id="pag-atual">1</span>
+                    <span id="pagina-atual">1</span>
                     <button class="botao-icone" onclick="mudarPagina(1)" aria-label="Próxima página"><i data-lucide="chevron-right"></i></button>
                 </div>
             </div>
@@ -135,7 +135,7 @@
     <section id="aba-detalhes" class="aba analise">
         <div class="busca">
             <i data-lucide="search"></i>
-            <input type="text" id="input-ticker" list="lista-tickers" autocomplete="off"
+            <input type="text" id="campo-ticker" list="lista-tickers" autocomplete="off"
                    placeholder="Buscar ação pelo código (ex.: WEGE3, PETR4) e pressionar Enter"
                    aria-label="Código da ação" onchange="carregarAnalise()">
             <datalist id="lista-tickers"></datalist>
@@ -150,8 +150,9 @@
         </div>
 
         <div id="leitura-container"></div>
+        <div id="indicadores-container"></div>
 
-        <div id="chart-section" class="cartao" hidden>
+        <div id="secao-grafico" class="cartao" hidden>
             <div class="grafico-topo">
                 <h3 class="titulo">Preço e indicadores técnicos</h3>
                 <div class="periodos" role="radiogroup" aria-label="Período do gráfico">
@@ -161,16 +162,17 @@
                     <button class="periodo" data-periodo="5 Anos" onclick="selecionarPeriodo('5 Anos')">5A</button>
                     <button class="periodo" data-periodo="10 Anos" onclick="selecionarPeriodo('10 Anos')">10A</button>
                 </div>
-                <input type="hidden" id="select-periodo" value="1 Ano">
+                <input type="hidden" id="periodo-grafico" value="1 Ano">
             </div>
             <div id="resumo-periodo" class="resumo-periodo"></div>
-            <div id="chart-container"></div>
-            <!-- Como ler o gráfico: sempre visível, um bloco por elemento -->
+            <div id="grafico-precos"></div>
+            <details class="como-ler-detalhes">
+                <summary>Como ler o gráfico</summary>
             <div class="como-ler">
                 <div><span class="legenda-cor" style="background:linear-gradient(90deg,#16c784 50%,#ea3943 50%)"></span>
                     <b>Candles</b><p>Cada barra é um pregão (ou uma semana em 5A e 10A). Verde: fechou acima da abertura; vermelho: abaixo. As linhas finas mostram a máxima e a mínima.</p></div>
                 <div><span class="legenda-cor" style="background:linear-gradient(90deg,#f59e0b 50%,#60a5fa 50%)"></span>
-                    <b>Médias móveis</b><p>Laranja: média de 50 pregões (tendência curta). Azul: 200 pregões (tendência longa). Preço acima das médias indica tendência de alta.</p></div>
+                    <b>Médias móveis</b><p>Laranja: média de 50 pregões (tendência curta); azul: de 200 pregões (tendência longa). Em 5A e 10A, 10 e 40 semanas. Preço acima das médias indica tendência de alta.</p></div>
                 <div><span class="legenda-cor" style="background:#2a3448"></span>
                     <b>Volume</b><p>Barras no rodapé do gráfico: quanto foi negociado. Movimentos com volume alto são mais relevantes do que com volume baixo.</p></div>
                 <div><span class="legenda-cor" style="background:#a78bfa"></span>
@@ -178,11 +180,10 @@
                 <div><span class="legenda-cor" style="background:repeating-linear-gradient(90deg,#cbd5e1 0 4px,transparent 4px 7px)"></span>
                     <b>Ibovespa</b><p>Linha pontilhada: o índice da bolsa ajustado para começar no mesmo preço da ação. Ação acima da linha: foi melhor que o mercado no período.</p></div>
             </div>
+            </details>
             <p class="dica">A análise técnica é apenas ilustrativa e não entra nos rankings, que usam somente os indicadores fundamentalistas.</p>
         </div>
 
-        <div id="comparativo-container"></div>
-        <div id="indicadores-container"></div>
         <div id="evolucao-container"></div>
     </section>
 </main>

@@ -13,7 +13,7 @@
 !/coleta.py
 !/estrategias.py
 !/database.py
-!/cron_updater.py
+!/rotina_diaria.py
 !/requirements.txt
 
 # Front-end (Vercel)

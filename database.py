@@ -18,6 +18,7 @@ A conexão vem exclusivamente da variável de ambiente DATABASE_URL
 (no desenvolvimento local, pode ser definida em um arquivo .env).
 """
 
+import logging
 import math
 import os
 import threading
@@ -28,6 +29,8 @@ from zoneinfo import ZoneInfo
 import psycopg2
 from psycopg2 import pool as pg_pool
 from psycopg2.extras import RealDictCursor, execute_values
+
+log = logging.getLogger(__name__)
 
 try:
     from dotenv import load_dotenv  # opcional, só para desenvolvimento local
@@ -127,6 +130,11 @@ def _executar(funcao, dict_cursor=False):
                 raise
 
 
+def testar_conexao():
+    """Abre uma conexão e executa SELECT 1. Levanta a exceção do driver se o banco não responder."""
+    _executar(lambda cursor: cursor.execute("SELECT 1;"))
+
+
 def _consultar(sql, parametros=None):
     """Executa um SELECT e devolve a lista de linhas como dicionários."""
     def _buscar(cursor):
@@ -189,9 +197,9 @@ def inicializar_banco():
     """
     try:
         _executar(lambda cursor: cursor.execute(sql))
-        print("✅ [BANCO] Tabelas prontas no Supabase.")
+        log.info("Tabelas prontas no Supabase.")
     except Exception as erro:
-        print(f"🚨 [BANCO] Erro ao inicializar tabelas: {erro}")
+        log.error(f"Erro ao inicializar tabelas: {erro}")
     agendar_rotina()
 
 
@@ -217,9 +225,9 @@ def agendar_rotina():
     """
     try:
         _executar(lambda cursor: cursor.execute(sql))
-        print("✅ [BANCO] Rotina diária agendada no Supabase (a cada 10 min).")
+        log.info("Rotina diária agendada no Supabase (a cada 10 min).")
     except Exception as erro:
-        print(f"🚨 [BANCO] Não foi possível agendar a rotina no Supabase: {erro}")
+        log.error(f"Não foi possível agendar a rotina no Supabase: {erro}")
 
 
 # =============================================================================
@@ -268,10 +276,10 @@ def salvar_coleta(df):
     try:
         registrou = _executar(_gravar)
         destino = f"pregão {pregao:%d/%m/%Y}" if registrou else "só no cache: preços iguais ao pregão anterior (feriado)"
-        print(f"🚀 [BANCO] {len(linhas)} ações gravadas (coleta {momento:%d/%m/%Y %H:%M}, {destino}).")
+        log.info(f"{len(linhas)} ações gravadas (coleta {momento:%d/%m/%Y %H:%M}, {destino}).")
         return True
     except Exception as erro:
-        print(f"🚨 [BANCO] Erro ao gravar coleta: {erro}")
+        log.error(f"Erro ao gravar coleta: {erro}")
         return False
 
 
@@ -298,10 +306,10 @@ def salvar_complementos(fechamentos, eventos):
 
     try:
         _executar(_gravar)
-        print(f"🚀 [BANCO] Ibovespa ({len(fechamentos)} dias) e eventos ({len(eventos)}) gravados.")
+        log.info(f"Ibovespa ({len(fechamentos)} dias) e eventos ({len(eventos)}) gravados.")
         return True
     except Exception as erro:
-        print(f"🚨 [BANCO] Erro ao gravar Ibovespa e eventos: {erro}")
+        log.error(f"Erro ao gravar Ibovespa e eventos: {erro}")
         return False
 
 
@@ -332,7 +340,7 @@ def ler_cache():
     try:
         return _consultar("SELECT * FROM acoes_cache;")
     except Exception as erro:
-        print(f"🚨 [BANCO] Erro ao ler cache: {erro}")
+        log.error(f"Erro ao ler cache: {erro}")
         return []
 
 
@@ -341,7 +349,7 @@ def tickers_atuais():
     try:
         return [linha["ticker"] for linha in _consultar("SELECT ticker FROM acoes_cache ORDER BY ticker;")]
     except Exception as erro:
-        print(f"🚨 [BANCO] Erro ao ler tickers: {erro}")
+        log.error(f"Erro ao ler tickers: {erro}")
         return []
 
 
@@ -364,7 +372,7 @@ def ler_historico(data_ref):
     try:
         registros = _consultar(sql, (data_ref,))
     except Exception as erro:
-        print(f"🚨 [BANCO] Erro ao ler histórico: {erro}")
+        log.error(f"Erro ao ler histórico: {erro}")
         return [], None
     if not registros:
         return [], None
@@ -380,7 +388,7 @@ def ler_historico_acao(ticker):
     try:
         return _consultar(sql, (ticker,))
     except Exception as erro:
-        print(f"🚨 [BANCO] Erro ao ler histórico de {ticker}: {erro}")
+        log.error(f"Erro ao ler histórico de {ticker}: {erro}")
         return []
 
 
@@ -389,6 +397,6 @@ def periodo_historico():
     try:
         linha = _consultar("SELECT MIN(data) AS inicio, MAX(data) AS fim FROM historico_diario;")
     except Exception as erro:
-        print(f"🚨 [BANCO] Erro ao ler período do histórico: {erro}")
+        log.error(f"Erro ao ler período do histórico: {erro}")
         return None, None
     return (linha[0]["inicio"], linha[0]["fim"]) if linha else (None, None)

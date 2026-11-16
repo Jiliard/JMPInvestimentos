@@ -11,12 +11,16 @@ As únicas contas feitas aqui são conversões de unidade de dados da própria A
 percentual -> fração, DPA = preço x DY e liquidez em R$ = volume médio x preço.
 """
 
+import logging
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pandas as pd
 import requests
+
+log = logging.getLogger(__name__)
 
 URL_TRADINGVIEW = "https://scanner.tradingview.com/brazil/scan"
 URL_YAHOO = "https://query2.finance.yahoo.com/v8/finance/chart/{simbolo}"   # ações: PETR4.SA; Ibovespa: ^BVSP
@@ -111,7 +115,7 @@ def buscar_acoes_tradingview():
     Busca os indicadores de todas as ações da B3 no TradingView.
     Retorna um DataFrame (vazio em caso de falha).
     """
-    print("⏳ [TRADINGVIEW] Coletando indicadores da B3...")
+    log.info("Coletando indicadores da B3...")
     payload = {
         "markets": ["brazil"],
         "filter": [{"left": "type", "operation": "equal", "right": "stock"}],
@@ -125,7 +129,7 @@ def buscar_acoes_tradingview():
         resposta.raise_for_status()
         itens = resposta.json().get("data", [])
     except Exception as erro:
-        print(f"🚨 [TRADINGVIEW] Falha na coleta: {erro}")
+        log.error(f"Falha na coleta: {erro}")
         return pd.DataFrame()
 
     acoes = []
@@ -144,7 +148,7 @@ def buscar_acoes_tradingview():
 
         acoes.append(_montar_acao(campos))
 
-    print(f"✅ [TRADINGVIEW] {len(acoes)} ações coletadas.")
+    log.info(f"{len(acoes)} ações coletadas.")
     return pd.DataFrame(acoes)
 
 
@@ -159,13 +163,17 @@ def buscar_cotacoes_yahoo(simbolo, inicio_ts, fim_ts, intervalo):
     Retorna um DataFrame com a coluna "date" (UTC) ou um DataFrame vazio.
     """
     url = f"{URL_YAHOO.format(simbolo=simbolo)}?period1={int(inicio_ts)}&period2={int(fim_ts)}&interval={intervalo}"
-    try:
-        resposta = requests.get(url, headers=CABECALHOS, timeout=10)
-        resposta.raise_for_status()
-        resultado = ((resposta.json().get("chart") or {}).get("result") or [None])[0]
-    except Exception as erro:
-        print(f"🚨 [YAHOO] Falha ao buscar {simbolo}: {erro}")
-        return pd.DataFrame()
+    for tentativa in range(2):   # o Yahoo recusa pedidos de vez em quando: tenta mais uma vez
+        try:
+            resposta = requests.get(url, headers=CABECALHOS, timeout=15)
+            resposta.raise_for_status()
+            resultado = ((resposta.json().get("chart") or {}).get("result") or [None])[0]
+            break
+        except Exception as erro:
+            if tentativa == 1:
+                log.error(f"Falha ao buscar {simbolo}: {erro}")
+                return pd.DataFrame()
+            time.sleep(1.5)
 
     if not resultado or not resultado.get("timestamp"):
         return pd.DataFrame()
@@ -220,7 +228,7 @@ def buscar_eventos_yahoo(ticker, dias=40):
         resposta.raise_for_status()
         eventos = (((resposta.json().get("chart") or {}).get("result") or [{}])[0] or {}).get("events") or {}
     except Exception as erro:
-        print(f"🚨 [YAHOO] Falha ao buscar eventos de {ticker}: {erro}")
+        log.error(f"Falha ao buscar eventos de {ticker}: {erro}")
         return []
     linhas = [(_data_b3(e["date"]), ticker, "dividendo", _numero(e.get("amount")))
               for e in (eventos.get("dividends") or {}).values()]
@@ -244,5 +252,5 @@ def buscar_complementos_backtesting(tickers, dias=40):
 
     with ThreadPoolExecutor(max_workers=8) as executor:
         eventos = [e for lista in executor.map(lambda t: buscar_eventos_yahoo(t, dias), tickers) for e in lista]
-    print(f"✅ [YAHOO] Ibovespa: {len(fechamentos)} fechamentos; eventos: {len(eventos)} em {len(tickers)} ações.")
+    log.info(f"Ibovespa: {len(fechamentos)} fechamentos; eventos: {len(eventos)} em {len(tickers)} ações.")
     return fechamentos, eventos
