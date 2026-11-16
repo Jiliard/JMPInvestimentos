@@ -48,6 +48,7 @@ COLUNAS_TEXTO = ["ticker", "nome", "setor", "industria"]
 COLUNAS_NUMERICAS = [
     "preco", "pl", "pvp", "dy", "roic", "roe", "margem", "crescimento", "liquidez",
     "lpa", "vpa", "dpa_12m", "evebit", "patrimonio", "divida_total", "divida_patrimonio",
+    "lpa_medio_3a",
 ]
 COLUNAS = COLUNAS_TEXTO + COLUNAS_NUMERICAS
 
@@ -162,8 +163,27 @@ def _linha_para_tupla(linha):
 # =============================================================================
 # CRIAÇÃO DAS TABELAS
 # =============================================================================
+def _tipo(coluna):
+    # DOUBLE PRECISION guarda os valores da API sem arredondar (REAL guardaria só ~7 dígitos)
+    return "VARCHAR(150)" if coluna in COLUNAS_TEXTO[1:] else "DOUBLE PRECISION"
+
+
 def _sql_colunas():
-    return ",\n".join(f"{c} {'VARCHAR(150)' if c in COLUNAS_TEXTO[1:] else 'REAL'}" for c in COLUNAS[1:])
+    return ",\n".join(f"{c} {_tipo(c)}" for c in COLUNAS[1:])
+
+
+def _atualizar_estrutura(cursor):
+    """Ajusta tabelas criadas por versões anteriores: colunas novas e REAL -> DOUBLE PRECISION."""
+    for tabela in ("acoes_cache", "historico_diario"):
+        for coluna in COLUNAS[1:]:
+            cursor.execute(f"ALTER TABLE {tabela} ADD COLUMN IF NOT EXISTS {coluna} {_tipo(coluna)};")
+    cursor.execute("""
+        SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND data_type = 'real'
+          AND table_name IN ('acoes_cache', 'historico_diario', 'indice_diario', 'eventos_acoes');
+    """)
+    for tabela, coluna in cursor.fetchall():
+        cursor.execute(f"ALTER TABLE {tabela} ALTER COLUMN {coluna} TYPE DOUBLE PRECISION;")
 
 
 def inicializar_banco():
@@ -183,20 +203,21 @@ def inicializar_banco():
         );
         CREATE TABLE IF NOT EXISTS indice_diario (
             data DATE PRIMARY KEY,
-            ibovespa REAL NOT NULL,
+            ibovespa DOUBLE PRECISION NOT NULL,
             coletado_em TIMESTAMP NOT NULL
         );
         CREATE TABLE IF NOT EXISTS eventos_acoes (
             data DATE NOT NULL,                 -- data ex (dividendo) ou de vigência (desdobramento)
             ticker VARCHAR(10) NOT NULL,
             tipo VARCHAR(13) NOT NULL CHECK (tipo IN ('dividendo', 'desdobramento')),
-            valor REAL NOT NULL,                -- R$ por ação ou ações novas por ação antiga
+            valor DOUBLE PRECISION NOT NULL,    -- R$ por ação ou ações novas por ação antiga
             coletado_em TIMESTAMP NOT NULL,
             PRIMARY KEY (data, ticker, tipo)
         );
     """
     try:
         _executar(lambda cursor: cursor.execute(sql))
+        _executar(_atualizar_estrutura)
         log.info("Tabelas prontas no Supabase.")
     except Exception as erro:
         log.error(f"Erro ao inicializar tabelas: {erro}")

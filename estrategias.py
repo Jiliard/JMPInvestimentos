@@ -1,7 +1,7 @@
 """
 Filtros e métodos de ranqueamento (Seção 2.5 e Quadro 4 da monografia).
 
-    Graham      Preço Justo = √(22,5 × LPA × VPA)                Equações (1) e (2)
+    Graham      Preço Justo = √(22,5 × LPA médio 3 anos × VPA)   Equações (1) e (2)
     Bazin       Preço Teto = DPA 12m ÷ 0,06 (só DY ≥ 6%)          Equação (3)
     Greenblatt  Posição(ROIC) + Posição(EV/EBIT)                  Equação (4)
     Lynch       PEG = P/L ÷ crescimento do lucro (%)              Equação (5)
@@ -73,8 +73,9 @@ def aplicar_filtros(df, f):
 
 
 def graham(df):
-    df = df[(df["lpa"] > 0) & (df["vpa"] > 0)].copy()
-    df["valor_justo"] = np.sqrt(22.5 * df["lpa"] * df["vpa"])
+    """P/L sobre o lucro médio dos três últimos exercícios x P/VP <= 22,5 (Graham)."""
+    df = df[(df["lpa_medio_3a"] > 0) & (df["vpa"] > 0)].copy()
+    df["valor_justo"] = np.sqrt(22.5 * df["lpa_medio_3a"] * df["vpa"])
     df["potencial"] = df["valor_justo"] / df["preco"] - 1        # margem de segurança
     return df.sort_values("potencial", ascending=False)
 

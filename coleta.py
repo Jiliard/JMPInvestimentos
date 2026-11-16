@@ -7,8 +7,9 @@ Coleta de dados nas APIs financeiras.
 
 Regra geral: os indicadores vêm prontos da API. Quando a API não traz um
 dado, ele fica como NaN (exibido como "N/D") e nunca é estimado, copiado ou zerado.
-As únicas contas feitas aqui são conversões de unidade de dados da própria API:
-percentual -> fração, DPA = preço x DY e liquidez em R$ = volume médio x preço.
+As únicas contas feitas aqui usam apenas dados da própria API: conversão de
+percentual em fração, DPA = preço x DY, liquidez em R$ = volume médio x preço e
+LPA médio dos três últimos exercícios (critério de Graham).
 """
 
 import logging
@@ -38,6 +39,7 @@ CAMPOS_TRADINGVIEW = [
     "price_book_fq",                      # P/VP (último trimestre)
     "book_value_per_share_fq",            # VPA
     "earnings_per_share_basic_ttm",       # LPA (12 meses)
+    "earnings_per_share_basic_fy_h",      # LPA de cada exercício, do mais recente ao mais antigo
     "dividends_yield_current",            # DY dos últimos 12 meses (%)
     "return_on_equity",                   # ROE (%)
     "return_on_invested_capital",         # ROIC (%)
@@ -76,6 +78,12 @@ def _percentual(valor):
     return _numero(valor) / 100.0
 
 
+def _lpa_tres_exercicios(historico):
+    """LPA dos três últimos exercícios (mais recente primeiro); None se faltar algum ano."""
+    anos = [_numero(v) for v in (historico or [])[:3]]
+    return anos if len(anos) == 3 and not any(np.isnan(anos)) else None
+
+
 # =============================================================================
 # TRADINGVIEW: INDICADORES FUNDAMENTALISTAS
 # =============================================================================
@@ -83,6 +91,7 @@ def _montar_acao(campos):
     """Transforma a resposta bruta de um ativo no registro usado pela plataforma."""
     preco = _numero(campos["close"])
     dy = _percentual(campos["dividends_yield_current"])
+    lpa_anos = _lpa_tres_exercicios(campos["earnings_per_share_basic_fy_h"])
 
     return {
         "ticker": campos["name"],
@@ -95,6 +104,9 @@ def _montar_acao(campos):
         "pvp": _numero(campos["price_book_fq"]),
         "lpa": _numero(campos["earnings_per_share_basic_ttm"]),
         "vpa": _numero(campos["book_value_per_share_fq"]),
+        # Graham usa o lucro médio dos três últimos anos (Equação 1 da monografia)
+        "lpa_anos": lpa_anos,
+        "lpa_medio_3a": float(np.mean(lpa_anos)) if lpa_anos else np.nan,
         "dy": dy,
         "dpa_12m": preco * dy,  # dividendos por ação nos últimos 12 meses (R$)
         "roe": _percentual(campos["return_on_equity"]),

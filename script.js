@@ -66,8 +66,8 @@ if (!preferencias.colunas) preferencias.colunas = COLUNAS_OPCIONAIS.filter(c => 
 const resultado = (titulo, valor, dica, classe = () => '') => ({ titulo, valor, dica, classe });
 const METODOS = {
     graham: {
-        balao: { formula: 'Preço Justo = √(22,5 × LPA × VPA)', busca: 'ações abaixo do valor intrínseco.',
-                 regra: 'lucro e patrimônio positivos.', ordem: 'maior margem de segurança.' },
+        balao: { formula: 'Preço Justo = √(22,5 × LPA médio de 3 anos × VPA)', busca: 'ações abaixo do valor intrínseco.',
+                 regra: 'lucro médio de 3 anos e patrimônio positivos.', ordem: 'maior margem de segurança.' },
         colunas: [resultado('Valor Justo Graham', i => reais(i.valor_justo), 'Valor intrínseco de Graham'),
                   resultado('Margem de Segurança', i => pct(i.potencial), 'Quanto o preço justo está acima da cotação', i => cor(i.potencial))],
     },
@@ -97,6 +97,7 @@ const EXPLICA = {
     pvp: 'Preço da ação ÷ patrimônio por ação. Abaixo de 1, a ação custa menos que o patrimônio da empresa. Quanto menor, mais barata.',
     evebit: 'Valor da empresa (ações + dívidas − caixa) ÷ lucro operacional. Quanto menor, mais barata. Usado por Greenblatt.',
     lpa: 'Lucro dos últimos 12 meses dividido pelo número de ações: quanto do lucro cabe a cada ação.',
+    lpa_medio_3a: 'Média do lucro por ação dos três últimos exercícios anuais. É o lucro usado por Graham no cálculo do preço justo.',
     vpa: 'Patrimônio dividido pelo número de ações: quanto do patrimônio cabe a cada ação.',
     roe: 'Lucro ÷ patrimônio: quanto a empresa lucra com o dinheiro dos sócios. Quanto maior, melhor.',
     roic: 'Lucro operacional ÷ capital investido (dos sócios e de dívidas): mede a eficiência do negócio. Quanto maior, melhor.',
@@ -512,7 +513,7 @@ function montarCabecalhoAcao(d, periodo) {
 }
 
 // Valor justo de Graham e preço teto de Bazin (mesmas fórmulas do back-end); null quando não se aplicam
-const valorJusto = f => f.lpa > 0 && f.vpa > 0 ? Math.sqrt(22.5 * f.lpa * f.vpa) : null;
+const valorJusto = f => f.lpa_medio_3a > 0 && f.vpa > 0 ? Math.sqrt(22.5 * f.lpa_medio_3a * f.vpa) : null;
 const precoTeto = f => f.dpa_12m > 0 ? f.dpa_12m / 0.06 : null;
 
 // O que cada estratégia conclui sobre a ação (mesmas fórmulas do back-end, aplicadas aos dados atuais)
@@ -532,12 +533,12 @@ function montarLeituraMetodos(d) {
     const boaRoic = f.roic > (mercado.roic?.mercado ?? Infinity);
     const barataEv = f.evebit > 0 && f.evebit < (mercado.evebit?.mercado ?? -Infinity);
 
-    const ajudaGraham = 'Preço justo = √(22,5 × LPA × VPA). Se a cotação está abaixo dele, a margem de segurança é positiva.';
+    const ajudaGraham = 'Preço justo = √(22,5 × LPA médio dos 3 últimos anos × VPA). Se a cotação está abaixo dele, a margem de segurança é positiva.';
     const graham = justo
         ? caixa('Graham', ajudaGraham, margem > 0 ? selo('Abaixo do preço justo', 'positivo') : selo('Acima do preço justo', 'negativo'),
                 reais(justo), 'preço justo',
                 `A cotação (${reais(f.preco)}) está ${margem > 0 ? 'abaixo' : 'acima'} do preço justo: margem de segurança de <b class="${cor(margem)}">${pct(margem)}</b>.`)
-        : fora('Graham', ajudaGraham, 'O método exige lucro e patrimônio positivos.');
+        : fora('Graham', ajudaGraham, ehNumero(f.lpa_medio_3a) ? 'O método exige lucro médio de 3 anos e patrimônio positivos.' : 'O lucro dos três últimos anos não foi informado pela fonte.');
 
     const ajudaBazin = 'Preço teto = dividendos dos últimos 12 meses ÷ 6%: o maior preço que ainda rende 6% ao ano em dividendos.';
     const bazin = teto
@@ -605,7 +606,8 @@ function montarIndicadores(d) {
     // [chave, rótulo, formato, menor é melhor? (ausente = indicador sem comparação)]
     const grupos = [
         ['Preço', [['pl', 'Preço sobre lucro (P/L)', vezes(1), true], ['pvp', 'Preço sobre patrimônio (P/VP)', vezes(2), true],
-                   ['evebit', 'EV/EBIT', vezes(1), true], ['lpa', 'Lucro por ação (LPA)', reais],
+                   ['evebit', 'EV/EBIT', vezes(1), true], ['lpa', 'Lucro por ação (LPA, 12 meses)', reais],
+                   ['lpa_medio_3a', 'LPA médio (3 últimos anos)', reais],
                    ['vpa', 'Valor patrimonial por ação (VPA)', reais]]],
         ['Rentabilidade e crescimento', [['roe', 'ROE', pct, false], ['roic', 'ROIC', pct, false], ['margem', 'Margem líquida', pct, false],
                    ['crescimento', 'Crescimento do lucro (5 anos)', v => ehNumero(v) ? pct(v) + ' a.a.' : 'N/D']]],
