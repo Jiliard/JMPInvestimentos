@@ -15,6 +15,7 @@
 !/database.py
 !/rotina_diaria.py
 !/requirements.txt
+!/.python-version
 
 # Front-end (Vercel)
 !/index.html
