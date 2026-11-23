@@ -117,7 +117,7 @@ def rendimento_operacional(df):
     """
     EBIT/EV de Greenblatt: lucro operacional dividido pelo valor da empresa.
     EV zero ou negativo deixa o valor vazio (a conta não indica se a empresa é barata).
-    Coletas anteriores a 17/11/2026 não têm EBIT e EV separados: nelas o valor é o
+    Coletas anteriores a 23/11/2026 não têm EBIT e EV separados: nelas o valor é o
     inverso do EV/EBIT da mesma fonte, que é a mesma conta (EV/EBIT = EV ÷ EBIT).
     """
     vazio = pd.Series(np.nan, index=df.index)

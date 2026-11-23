@@ -300,8 +300,7 @@ tbody tr:nth-child(-n+3) .posicao { background: var(--marca-suave); color: var(-
 
 /* --------------------------------- Rodapé --------------------------------- */
 .rodape { border-top: 1px solid var(--borda); padding: 16px 24px 22px; text-align: center; color: var(--texto-2); font-size: 12px; line-height: 1.6; }
-.rodape p { margin: 0 auto 4px; max-width: 900px; }
-.rodape-fonte { opacity: .75; }
+.rodape p { margin: 0 auto; max-width: 900px; }
 
 /* ------------------------------ Responsivo -------------------------------- */
 @media (max-width: 1180px) {

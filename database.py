@@ -55,6 +55,10 @@ COLUNAS_NUMERICAS = [
 ]
 COLUNAS = COLUNAS_TEXTO + COLUNAS_NUMERICAS
 
+# Início do histórico do backtesting: primeiro pregão com todos os dados das quatro
+# estratégias (o LPA médio de 3 anos de Graham passou a ser gravado nesse dia).
+INICIO_HISTORICO = datetime(2026, 11, 16).date()
+
 # Uma coleta com menos ações que isso é tratada como parcial (falha da API) e
 # não remove do cache as ações que ficaram de fora.
 MINIMO_ACOES_COLETA_COMPLETA = 200
@@ -326,6 +330,9 @@ def salvar_complementos(fechamentos, eventos):
     só atualiza). Retorna True se gravou com sucesso.
     """
     momento = agora_b3()
+    # A busca cobre os últimos 40 dias: nada anterior ao início do histórico é gravado
+    fechamentos = [f for f in fechamentos if f[0] >= INICIO_HISTORICO]
+    eventos = [e for e in eventos if e[0] >= INICIO_HISTORICO]
 
     def _gravar(cursor):
         if fechamentos:

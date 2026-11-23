@@ -39,7 +39,6 @@ app = Flask(__name__)
 CORS(app, expose_headers=["X-Data-Base"])   # o front-end na Vercel lê a data dos dados neste cabeçalho
 
 IDADE_MAXIMA = timedelta(minutes=5)          # dados mais velhos são atualizados em segundo plano
-INICIO_LPA_MEDIO = datetime(2026, 11, 16)    # primeiro pregão gravado com o LPA médio de 3 anos (Graham)
 ARQUIVOS_PUBLICOS = {"index.html", "script.js", "style.css", "favicon.svg"}
 URL_LOGOS = "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones/"
 
@@ -274,9 +273,6 @@ def rankings():
             if inicio:
                 return _erro(f"Não há pregão registrado até {data_ref:%d/%m/%Y}. O histórico começa em {inicio:%d/%m/%Y}.", 404)
             return _erro("O histórico ainda está vazio.", 404)
-        if metodo == "graham" and df["lpa_medio_3a"].isna().all():
-            return _erro(f"O pregão de {pregao:%d/%m/%Y} não tem o lucro médio de três anos usado por Graham, "
-                         f"registrado a partir de {INICIO_LPA_MEDIO:%d/%m/%Y}. Escolha uma data posterior ou outra estratégia.", 404)
         data_base = pregao.isoformat()
         dia = pregao
     else:
