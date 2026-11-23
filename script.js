@@ -9,11 +9,11 @@
 const API_PRODUCAO = 'https://jmpinvestimentos.onrender.com';
 const API = (location.origin === API_PRODUCAO || location.port === '5000') ? '' : API_PRODUCAO;
 
-// Filtros padrão (Quadro 4 da monografia)
-const FILTROS_PADRAO = { liq_min: 100000, pl_max: 20, pvp_max: 2, divida_max: 1.5, roe_min: 10,
-                         roic_min: 10, margem_min: 5, cagr_min: 0, dy_min: 0 };
+// Filtros padrão: liquidez mínima de R$ 500 mil; os indicadores começam sem limite
+const FILTROS_PADRAO = { liq_min: '500000', pl_max: '', pvp_max: '', divida_max: '', roe_min: '',
+                         roic_min: '', margem_min: '', cagr_min: '', dy_min: '' };
 const ITENS_POR_PAGINA = 25;
-const CHAVE_CACHE = 'jmp:buscas:v3';        // últimas respostas por método/filtros, para exibir na hora
+const CHAVE_CACHE = 'jmp:buscas:v4';        // últimas respostas por método/filtros, para exibir na hora
 const METODO_PADRAO = 'graham';
 const CHAVE_PREFERENCIAS = 'jmp:preferencias:v1';
 
@@ -55,7 +55,7 @@ const COLUNAS_OPCIONAIS = [
     coluna('roe', 'ROE', i => pct(i.roe), 'Lucro ÷ patrimônio dos acionistas. Maior = melhor'),
     coluna('dy', 'DY', i => pct(i.dy), 'Dividendos dos últimos 12 meses sobre o preço'),
     coluna('cresc', 'Cresc. 5a', i => pct(i.crescimento), 'Crescimento anual do lucro por ação em 5 anos'),
-    coluna('evebit', 'EV/EBIT', i => num(i.evebit, 2), 'Valor da empresa ÷ lucro operacional. Menor = mais barata', false),
+    coluna('ebit_ev', 'EBIT/EV', i => pct(i.ebit_ev), 'Lucro operacional ÷ valor da empresa. Maior = mais barata', false),
     coluna('margem', 'Margem', i => pct(i.margem), 'Parcela da receita que vira lucro', false),
     coluna('divida', 'Dív./PL', i => num(i.divida_patrimonio, 2), 'Dívida bruta ÷ patrimônio líquido. Menor = menos endividada', false),
     coluna('liquidez', 'Liquidez', i => grande(i.liquidez), 'Volume médio negociado por dia (30 pregões)', false),
@@ -66,9 +66,9 @@ if (!preferencias.colunas) preferencias.colunas = COLUNAS_OPCIONAIS.filter(c => 
 const resultado = (titulo, valor, dica, classe = () => '') => ({ titulo, valor, dica, classe });
 const METODOS = {
     graham: {
-        balao: { formula: 'Preço Justo = √(22,5 × LPA médio de 3 anos × VPA)', busca: 'ações abaixo do valor intrínseco.',
+        balao: { formula: 'Preço Justo = √(22,5 × LPA médio de 3 anos × VPA)', busca: 'ações abaixo do preço justo.',
                  regra: 'lucro médio de 3 anos e patrimônio positivos.', ordem: 'maior margem de segurança.' },
-        colunas: [resultado('Valor Justo Graham', i => reais(i.valor_justo), 'Valor intrínseco de Graham'),
+        colunas: [resultado('Preço Justo Graham', i => reais(i.valor_justo), 'Maior preço com P/L × P/VP até 22,5'),
                   resultado('Margem de Segurança', i => pct(i.potencial), 'Quanto o preço justo está acima da cotação', i => cor(i.potencial))],
     },
     bazin: {
@@ -78,15 +78,15 @@ const METODOS = {
                   resultado('Desconto ao Teto', i => pct(i.potencial), 'Quanto o preço teto está acima da cotação', i => cor(i.potencial))],
     },
     greenblatt: {
-        balao: { formula: 'Pontuação = posição em ROIC + posição em EV/EBIT', busca: 'empresas boas e baratas.',
+        balao: { formula: 'Pontuação = posição em ROIC + posição em EBIT/EV', busca: 'empresas boas e baratas.',
                  regra: 'exclui bancos, seguradoras e utilidade pública.', ordem: 'menor pontuação.' },
         colunas: [resultado('Pontuação', i => num(i.potencial, 0) + ' pts', 'Soma das duas posições'),
-                  resultado('Posições ROIC + EV/EBIT', i => `${num(i.pos_roic, 0)}º + ${num(i.pos_evebit, 0)}º`, 'Posição no ranking de ROIC + posição no de EV/EBIT')],
+                  resultado('Posições ROIC + EBIT/EV', i => `${num(i.pos_roic, 0)}º + ${num(i.pos_ebit_ev, 0)}º`, 'Posição no ranking de ROIC + posição no de EBIT/EV')],
     },
     lynch: {
         balao: { formula: 'PEG = P/L ÷ crescimento anual do lucro (%)', busca: 'crescimento a preço razoável.',
                  regra: 'lucro e crescimento positivos.', ordem: 'menor PEG (abaixo de 1 é barato).' },
-        colunas: [resultado('PEG Ratio', i => num(i.peg_ratio), 'P/L dividido pelo crescimento'),
+        colunas: [resultado('PEG Ratio', i => num(i.peg_ratio, 4), 'P/L dividido pelo crescimento'),
                   resultado('Crescimento (CAGR)', i => pct(i.crescimento) + ' a.a.', 'Crescimento anual do lucro por ação em 5 anos', i => cor(i.crescimento))],
     },
 };
@@ -95,7 +95,7 @@ const METODOS = {
 const EXPLICA = {
     pl: 'Preço da ação ÷ lucro por ação dos últimos 12 meses. Mostra quantos anos de lucro equivalem ao preço. Quanto menor, mais barata.',
     pvp: 'Preço da ação ÷ patrimônio por ação. Abaixo de 1, a ação custa menos que o patrimônio da empresa. Quanto menor, mais barata.',
-    evebit: 'Valor da empresa (ações + dívidas − caixa) ÷ lucro operacional. Quanto menor, mais barata. Usado por Greenblatt.',
+    ebit_ev: 'Lucro operacional ÷ valor da empresa (ações + dívidas − caixa): o rendimento operacional usado por Greenblatt. Quanto maior, mais barata.',
     lpa: 'Lucro dos últimos 12 meses dividido pelo número de ações: quanto do lucro cabe a cada ação.',
     lpa_medio_3a: 'Média do lucro por ação dos três últimos exercícios anuais. É o lucro usado por Graham no cálculo do preço justo.',
     vpa: 'Patrimônio dividido pelo número de ações: quanto do patrimônio cabe a cada ação.',
@@ -288,13 +288,13 @@ function restaurarColunas() {
 
 // Mostra no título dos filtros quantos estão diferentes do padrão
 function atualizarSeloFiltros() {
-    const alterados = Object.keys(FILTROS_PADRAO).filter(c => $(c).value !== String(FILTROS_PADRAO[c])).length;
+    const alterados = Object.keys(FILTROS_PADRAO).filter(c => $(c).value !== FILTROS_PADRAO[c]).length;
     $('selo-filtros').hidden = alterados === 0;
     $('selo-filtros').textContent = `${alterados} alterado${alterados > 1 ? 's' : ''}`;
 }
 
 function preencherFiltros(filtros) {
-    Object.keys(FILTROS_PADRAO).forEach(campo => { $(campo).value = filtros[campo] ?? ''; });
+    Object.keys(FILTROS_PADRAO).forEach(campo => { $(campo).value = filtros[campo] ?? FILTROS_PADRAO[campo]; });
 }
 
 function restaurarPadrao() {
@@ -512,7 +512,7 @@ function montarCabecalhoAcao(d, periodo) {
     </div>`;
 }
 
-// Valor justo de Graham e preço teto de Bazin (mesmas fórmulas do back-end); null quando não se aplicam
+// Preço justo de Graham e preço teto de Bazin (mesmas fórmulas do back-end); null quando não se aplicam
 const valorJusto = f => f.lpa_medio_3a > 0 && f.vpa > 0 ? Math.sqrt(22.5 * f.lpa_medio_3a * f.vpa) : null;
 const precoTeto = f => f.dpa_12m > 0 ? f.dpa_12m / 0.06 : null;
 
@@ -531,7 +531,7 @@ function montarLeituraMetodos(d) {
     const teto = precoTeto(f);
     const peg = f.pl > 0 && f.crescimento > 0 ? f.pl / (f.crescimento * 100) : null;
     const boaRoic = f.roic > (mercado.roic?.mercado ?? Infinity);
-    const barataEv = f.evebit > 0 && f.evebit < (mercado.evebit?.mercado ?? -Infinity);
+    const barataEv = f.ebit_ev > 0 && f.ebit_ev > (mercado.ebit_ev?.mercado ?? Infinity);
 
     const ajudaGraham = 'Preço justo = √(22,5 × LPA médio dos 3 últimos anos × VPA). Se a cotação está abaixo dele, a margem de segurança é positiva.';
     const graham = justo
@@ -549,21 +549,21 @@ function montarLeituraMetodos(d) {
                     : `Os dividendos de 12 meses renderam ${pct(f.dy)}, abaixo dos 6% exigidos: a ação fica fora do ranking de Bazin.`)
         : fora('Bazin', ajudaBazin, 'Não pagou dividendos nos últimos 12 meses.');
 
-    const ajudaGreenblatt = 'Ordena as empresas por ROIC (rentabilidade: maior é melhor) e por EV/EBIT (preço: menor é melhor) e soma as duas posições.';
+    const ajudaGreenblatt = 'Ordena as empresas por ROIC (rentabilidade: maior é melhor) e por EBIT/EV (rendimento operacional: maior é mais barata) e soma as duas posições.';
     const greenblatt = d.excluida_greenblatt
         ? fora('Greenblatt', ajudaGreenblatt, 'O método exclui bancos, seguradoras e empresas de utilidade pública.')
-        : !(f.roic > 0 && f.evebit > 0)
-            ? fora('Greenblatt', ajudaGreenblatt, 'ROIC ou EV/EBIT não informado ou não positivo.')
+        : !(f.roic > 0 && f.ebit_ev > 0)
+            ? fora('Greenblatt', ajudaGreenblatt, 'ROIC ou EBIT/EV não informado ou não positivo.')
             : caixa('Greenblatt', ajudaGreenblatt,
                     boaRoic && barataEv ? selo('Boa e barata', 'positivo')
                         : selo(boaRoic || barataEv ? 'Atende em parte' : 'Não atende', boaRoic || barataEv ? '' : 'negativo'),
-                    `${pct(f.roic)} <small>ROIC</small> · ${num(f.evebit, 1, 'x')} <small>EV/EBIT</small>`, 'rentabilidade e preço',
+                    `${pct(f.roic)} <small>ROIC</small> · ${pct(f.ebit_ev)} <small>EBIT/EV</small>`, 'rentabilidade e preço',
                     `Rentabilidade ${boaRoic ? 'acima' : 'abaixo'} e preço ${barataEv ? 'abaixo' : 'acima'} da mediana da B3. A posição no ranking aparece na tela de ranking.`);
 
     const ajudaLynch = 'PEG = P/L ÷ crescimento anual do lucro (em %). Abaixo de 1, o preço é baixo para o ritmo de crescimento.';
     const lynch = peg
         ? caixa('Lynch', ajudaLynch, peg < 1 ? selo('PEG < 1', 'positivo') : peg <= 2 ? selo('PEG entre 1 e 2') : selo('PEG > 2', 'negativo'),
-                num(peg), 'PEG',
+                num(peg, 4), 'PEG',
                 `P/L de ${num(f.pl, 1, 'x')} para um lucro que cresceu ${pct(f.crescimento)} ao ano: preço ${peg < 1 ? 'baixo' : peg <= 2 ? 'razoável' : 'alto'} para esse crescimento.`)
         : fora('Lynch', ajudaLynch, ehNumero(f.crescimento) ? 'O método exige lucro e crescimento positivos.' : 'O crescimento do lucro não foi informado pela fonte.');
 
@@ -576,9 +576,9 @@ function montarLeituraMetodos(d) {
     </div>`;
 }
 
-// Gráfico: cotação x valor justo de Graham x preço teto de Bazin
+// Gráfico: cotação x preço justo de Graham x preço teto de Bazin
 function desenharGraficoMetodos(f) {
-    const barras = [['Cotação atual', f.preco], ['Valor justo (Graham)', valorJusto(f)], ['Preço teto (Bazin)', precoTeto(f)]]
+    const barras = [['Cotação atual', f.preco], ['Preço justo (Graham)', valorJusto(f)], ['Preço teto (Bazin)', precoTeto(f)]]
         .filter(b => ehNumero(b[1]));
     if (!$('grafico-metodos') || barras.length < 2) return;
     Plotly.newPlot('grafico-metodos', [{
@@ -594,7 +594,7 @@ function desenharGraficoMetodos(f) {
 
 // Leitura da comparação com o setor, por indicador: [melhor, pior]
 const LEITURA = {
-    pl: ['mais barata', 'mais cara'], pvp: ['mais barata', 'mais cara'], evebit: ['mais barata', 'mais cara'],
+    pl: ['mais barata', 'mais cara'], pvp: ['mais barata', 'mais cara'], ebit_ev: ['mais barata', 'mais cara'],
     divida_patrimonio: ['menos endividada', 'mais endividada'], dy: ['paga mais dividendos', 'paga menos dividendos'],
 };
 
@@ -606,7 +606,7 @@ function montarIndicadores(d) {
     // [chave, rótulo, formato, menor é melhor? (ausente = indicador sem comparação)]
     const grupos = [
         ['Preço', [['pl', 'Preço sobre lucro (P/L)', vezes(1), true], ['pvp', 'Preço sobre patrimônio (P/VP)', vezes(2), true],
-                   ['evebit', 'EV/EBIT', vezes(1), true], ['lpa', 'Lucro por ação (LPA, 12 meses)', reais],
+                   ['ebit_ev', 'EBIT/EV (rendimento operacional)', pct, false], ['lpa', 'Lucro por ação (LPA, 12 meses)', reais],
                    ['lpa_medio_3a', 'LPA médio (3 últimos anos)', reais],
                    ['vpa', 'Valor patrimonial por ação (VPA)', reais]]],
         ['Rentabilidade e crescimento', [['roe', 'ROE', pct, false], ['roic', 'ROIC', pct, false], ['margem', 'Margem líquida', pct, false],
@@ -623,7 +623,7 @@ function montarIndicadores(d) {
         const mediana = menorMelhor === undefined ? null : c.indicadores[chave];
         let leitura = '';
         let classe = '';
-        const valido = ehNumero(valor) && !(['pl', 'pvp', 'evebit'].includes(chave) && valor <= 0);
+        const valido = ehNumero(valor) && !(['pl', 'pvp', 'ebit_ev'].includes(chave) && valor <= 0);
         if (mediana && valido && ehNumero(mediana.setor)) {
             const melhor = menorMelhor ? valor < mediana.setor : valor > mediana.setor;
             const [bom, ruim] = LEITURA[chave] || ['mais rentável', 'menos rentável'];

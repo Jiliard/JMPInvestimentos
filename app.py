@@ -50,6 +50,7 @@ _cache = {
     "complementos_em": None,     # dia em que o Ibovespa e os eventos foram gravados
 }
 _cache_historico = {}            # data de referência -> (DataFrame, pregão usado)
+_cache_liquidez = {}             # ano -> (registros do critério do NEFIN, momento da leitura)
 _cache_graficos = {}             # (ticker, período) -> (gráfico, momento da busca)
 _tarefas = set()                 # tarefas em segundo plano em andamento (evita duplicadas)
 _lock_tarefas = threading.Lock()
@@ -69,15 +70,31 @@ def _montar_df(registros):
     """DataFrame padronizado a partir do banco (lista de registros) ou da coleta (DataFrame)."""
     df = pd.DataFrame(registros, copy=True)   # cópia: não altera o DataFrame que vai para o banco
     for coluna in database.COLUNAS_NUMERICAS:
-        df[coluna] = pd.to_numeric(df[coluna], errors="coerce")
+        df[coluna] = pd.to_numeric(df[coluna], errors="coerce") if coluna in df else np.nan
+    df["ebit_ev"] = estrategias.rendimento_operacional(df)   # medida de preço de Greenblatt
     df["logo"] = URL_LOGOS + df["ticker"].str[:4] + ".png"
     return df
 
 
 def _ler_filtros(args):
-    """Parâmetro ausente usa o padrão do Quadro 4; parâmetro vazio desliga o filtro."""
+    """Parâmetro ausente usa o padrão (liquidez de R$ 500 mil); parâmetro vazio desliga o filtro."""
     return {chave: (padrao if chave not in args else numero_ou_none(args.get(chave)))
             for chave, padrao in estrategias.FILTROS_PADRAO.items()}
+
+
+def _liquidez(ano):
+    """Critério de liquidez do NEFIN gravado para `ano` (relido a cada hora: a rotina completa as faltas)."""
+    registros, lido_em = _cache_liquidez.get(ano, (None, None))
+    if registros is None or database.agora_b3() - lido_em > timedelta(hours=1):
+        registros = database.ler_liquidez_anual(ano)
+        _cache_liquidez[ano] = (registros, database.agora_b3())
+    return registros
+
+
+def _com_liquidez(df, data_ref):
+    """Anexa o critério de liquidez do ano anterior a `data_ref`. (DataFrame, True se havia o critério)."""
+    registros = _liquidez(data_ref.year - 1)
+    return estrategias.anexar_liquidez(df, registros), bool(registros)
 
 
 def _desatualizado(momento):
@@ -210,6 +227,7 @@ def _ao_iniciar():
     (feito na importação, travava o gunicorn além do limite de 30 s)."""
     database.inicializar_banco()
     dados_atuais()
+    _em_segundo_plano("liquidez", rotina_diaria.registrar_liquidez_anual)
 
 
 threading.Thread(target=_ao_iniciar, daemon=True).start()
@@ -257,6 +275,7 @@ def rankings():
             return _erro(f"O pregão de {pregao:%d/%m/%Y} não tem o lucro médio de três anos usado por Graham, "
                          f"registrado a partir de {INICIO_LPA_MEDIO:%d/%m/%Y}. Escolha uma data posterior ou outra estratégia.", 404)
         data_base = pregao.isoformat()
+        dia = pregao
     else:
         if request.args.get("atualizar") == "1":
             atualizar_agora(timedelta(minutes=1))
@@ -264,8 +283,14 @@ def rankings():
         if df is None or df.empty:
             return jsonify([])
         data_base = f"{df['updated_at'].max():%Y-%m-%dT%H:%M}"
+        dia = df["updated_at"].max().date()
 
-    resposta = jsonify(_para_json(estrategias.ranquear(df, metodo, _ler_filtros(request.args))))
+    filtros = _ler_filtros(request.args)
+    df, tem_liquidez = _com_liquidez(df, dia)
+    if filtros["liq_min"] is not None and not tem_liquidez:
+        return _erro(f"O critério de liquidez de {dia.year - 1} ainda está sendo calculado. "
+                     "Tente de novo em alguns minutos ou deixe a liquidez mínima vazia.", 503)
+    resposta = jsonify(_para_json(estrategias.ranquear(df, metodo, filtros)))
     resposta.headers["X-Data-Base"] = data_base
     return resposta
 
@@ -322,10 +347,10 @@ PERIODOS = {"30 Dias": (31, False), "6 Meses": (183, False), "1 Ano": (366, Fals
             "5 Anos": (1827, True), "10 Anos": (3653, True)}
 DIAS_AQUECIMENTO = 300   # dias extras para as médias e o IFR já começarem calculados
 
-# Indicadores comparados com o setor e com a B3. Nos múltiplos de preço, a mediana usa
-# só valores positivos (P/L negativo indica prejuízo, não ação barata).
-COMPARADOS = ["pl", "pvp", "evebit", "dy", "roe", "roic", "margem", "divida_patrimonio"]
-MULTIPLOS = {"pl", "pvp", "evebit"}
+# Indicadores comparados com o setor e com a B3. Nas medidas de preço, a mediana usa
+# só valores positivos (P/L ou EBIT/EV negativo indica prejuízo, não ação barata).
+COMPARADOS = ["pl", "pvp", "ebit_ev", "dy", "roe", "roic", "margem", "divida_patrimonio"]
+MULTIPLOS = {"pl", "pvp", "ebit_ev"}
 
 
 def _montar_grafico(ticker, periodo):
@@ -378,8 +403,9 @@ def _atualizar_grafico(ticker, periodo):
 
 
 def _comparativo(df, item):
-    """Medianas do setor e da B3, entre as ações com a liquidez mínima padrão."""
-    base = df[df["liquidez"] >= estrategias.FILTROS_PADRAO["liq_min"]]
+    """Medianas do setor e da B3, entre as ações que atendem à liquidez mínima padrão."""
+    df, tem_liquidez = _com_liquidez(df, df["updated_at"].max().date())
+    base = estrategias.aplicar_filtros(df, estrategias.FILTROS_PADRAO) if tem_liquidez else df
     setor = base[base["setor"] == item["setor"]]
 
     def mediana(grupo, coluna):
@@ -405,7 +431,7 @@ def analise():
         return _erro(f"Ativo {ticker} não encontrado na base.", 404)
     item = empresa.iloc[0]
 
-    fundamentos = {c: numero_ou_none(item[c]) for c in database.COLUNAS_NUMERICAS}
+    fundamentos = {c: numero_ou_none(item[c]) for c in database.COLUNAS_NUMERICAS + ["ebit_ev"]}
     fundamentos["links"] = {
         "site_ri": "https://www.google.com/search?q=" + quote_plus(f"RI Relações com Investidores {item['nome']}"),
         "tradingview": f"https://br.tradingview.com/symbols/BMFBOVESPA-{ticker}/",

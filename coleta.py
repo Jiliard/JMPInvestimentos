@@ -4,6 +4,8 @@ Coleta de dados nas APIs financeiras.
 - TradingView Scanner: indicadores fundamentalistas de todas as ações da B3.
 - Yahoo Finance: histórico de cotações para o gráfico técnico e, para o backtesting,
   fechamento do Ibovespa e eventos das ações (dividendos e desdobramentos).
+- B3 (Séries Históricas, arquivo anual COTAHIST): uma vez por ano, a negociação diária do
+  ano anterior usada no critério de liquidez do NEFIN.
 
 Regra geral: os indicadores vêm prontos da API. Quando a API não traz um
 dado, ele fica como NaN (exibido como "N/D") e nunca é estimado, copiado ou zerado.
@@ -12,9 +14,12 @@ percentual em fração, DPA = preço x DY, liquidez em R$ = volume médio x pre�
 LPA médio dos três últimos exercícios (critério de Graham).
 """
 
+import datetime
+import io
 import logging
 import re
 import time
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -44,7 +49,8 @@ CAMPOS_TRADINGVIEW = [
     "return_on_equity",                   # ROE (%)
     "return_on_invested_capital",         # ROIC (%)
     "net_margin",                         # margem líquida (%)
-    "enterprise_value_to_ebit_ttm",       # EV/EBIT
+    "ebit_ttm",                           # EBIT: lucro operacional (12 meses)
+    "enterprise_value_current",           # EV: valor da empresa (ações + dívidas - caixa)
     "earnings_per_share_basic_cagr_5y",   # CAGR do lucro por ação em 5 anos (%)
     "total_equity_fq",                    # patrimônio líquido
     "total_debt",                         # dívida bruta
@@ -112,7 +118,8 @@ def _montar_acao(campos):
         "roe": _percentual(campos["return_on_equity"]),
         "roic": _percentual(campos["return_on_invested_capital"]),
         "margem": _percentual(campos["net_margin"]),
-        "evebit": _numero(campos["enterprise_value_to_ebit_ttm"]),
+        "ebit": _numero(campos["ebit_ttm"]),             # Greenblatt divide o EBIT pelo EV
+        "ev": _numero(campos["enterprise_value_current"]),
         "crescimento": _percentual(campos["earnings_per_share_basic_cagr_5y"]),
         # Liquidez = volume financeiro MÉDIO diário, e não o volume parcial do dia
         "liquidez": _numero(campos["average_volume_30d_calc"]) * preco,
@@ -266,3 +273,85 @@ def buscar_complementos_backtesting(tickers, dias=40):
         eventos = [e for lista in executor.map(lambda t: buscar_eventos_yahoo(t, dias), tickers) for e in lista]
     log.info(f"Ibovespa: {len(fechamentos)} fechamentos; eventos: {len(eventos)} em {len(tickers)} ações.")
     return fechamentos, eventos
+
+
+# =============================================================================
+# B3: LIQUIDEZ DO ANO ANTERIOR (CRITÉRIO DO NEFIN)
+# =============================================================================
+# NEFIN (FEA-USP), Methodology, seção 3 - Eligibility Criteria. Uma ação é elegível no ano t se:
+#   1. é a classe de ação mais negociada da empresa (volume total no ano t-1);
+#   2. foi negociada em mais de 80% dos pregões do ano t-1 com volume diário acima de
+#      R$ 500 mil (se listada durante t-1, conta-se da listagem até o fim do ano);
+#   3. foi listada antes de dezembro do ano t-1.
+# Os dados vêm das Séries Históricas da B3 (arquivo anual COTAHIST): uma linha por ação e
+# pregão, com o volume financeiro negociado informado pela própria bolsa.
+URL_COTAHIST = "https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A{ano}.ZIP"
+VOLUME_DIARIO_NEFIN = 500_000
+FRACAO_PREGOES_NEFIN = 0.80
+
+
+def _ler_cotahist(ano):
+    """
+    Lê o arquivo anual de cotações da B3 e devolve {ticker: {data: volume financeiro em R$}}
+    do mercado à vista (lote padrão). Layout oficial: data nas posições 3-10, código de
+    negociação 13-24, tipo de mercado 25-27 (010 = à vista) e volume total 171-188 (2 decimais).
+    """
+    resposta = requests.get(URL_COTAHIST.format(ano=ano), headers=CABECALHOS, timeout=300)
+    resposta.raise_for_status()
+    negociacao = {}
+    with zipfile.ZipFile(io.BytesIO(resposta.content)) as arquivo:
+        with arquivo.open(arquivo.namelist()[0]) as linhas:
+            for linha in linhas:
+                if linha[:2] != b"01" or linha[24:27] != b"010":
+                    continue
+                ticker = linha[12:24].decode("latin-1").strip()
+                data = datetime.date(int(linha[2:6]), int(linha[6:8]), int(linha[8:10]))
+                volume = int(linha[170:188]) / 100
+                dias = negociacao.setdefault(ticker, {})
+                dias[data] = dias.get(data, 0.0) + volume
+    return negociacao
+
+
+def buscar_liquidez_anual(tickers, ano):
+    """
+    Critério de liquidez do NEFIN para o ano `ano` (o ano anterior ao dos rankings), com os
+    arquivos de cotações da B3 de `ano` e do ano anterior a ele (para saber se a ação já
+    estava listada no início de `ano`). Retorna um DataFrame com uma linha por ação: pregões
+    considerados, pregões com volume acima de R$ 500 mil, volume financeiro total do ano,
+    data de entrada considerada e se é elegível. Vazio em caso de falha.
+    """
+    try:
+        negociacao = _ler_cotahist(ano)
+        ja_listadas = set(_ler_cotahist(ano - 1))
+    except Exception as erro:
+        log.error(f"Falha ao ler as cotações da B3 de {ano}: {erro}")
+        return pd.DataFrame()
+    pregoes = sorted({d for dias in negociacao.values() for d in dias})
+    if len(pregoes) < 200 or pregoes[-1].month != 12:      # ano ainda não encerrado
+        log.error(f"Cotações de {ano} incompletas ({len(pregoes)} pregões); liquidez não calculada.")
+        return pd.DataFrame()
+    dezembro = datetime.date(ano, 12, 1)
+
+    linhas = []
+    for ticker in tickers:
+        dias = negociacao.get(ticker, {})
+        # Já negociada no ano anterior: listada antes do início do ano. Senão, a entrada
+        # na bolsa é o primeiro pregão em que foi negociada no ano.
+        entrada = pregoes[0] if ticker in ja_listadas else (min(dias) if dias else None)
+        janela = [d for d in pregoes if entrada and d >= entrada]
+        dias_acima = sum(1 for d in janela if dias.get(d, 0) > VOLUME_DIARIO_NEFIN)
+        # Volume diário superado em mais de 80% dos pregões: com m = parte inteira de 0,8 x n + 1,
+        # é o m-ésimo maior volume do ano (pregão sem negócio conta como zero). A ação tem mais
+        # de 80% dos pregões acima de um valor X se, e somente se, esse volume for maior que X.
+        # Assim o filtro aceita qualquer valor mínimo digitado pelo usuário.
+        volumes = sorted((dias.get(d, 0.0) for d in janela), reverse=True)
+        posicao = int(FRACAO_PREGOES_NEFIN * len(volumes)) + 1
+        volume_80 = volumes[posicao - 1] if posicao <= len(volumes) else 0.0
+        linhas.append({"ticker": ticker, "ano": ano, "pregoes": len(janela), "dias_acima": dias_acima,
+                       "volume_ano": float(sum(dias.values())), "volume_80": float(volume_80),
+                       "listagem": entrada, "listada_antes": bool(entrada is not None and entrada < dezembro),
+                       "elegivel": bool(entrada is not None and entrada < dezembro and janela
+                                        and dias_acima > FRACAO_PREGOES_NEFIN * len(janela))})
+    log.info(f"Liquidez de {ano} (B3): {len(linhas)} ações avaliadas, "
+             f"{sum(r['elegivel'] for r in linhas)} elegíveis pelo critério do NEFIN.")
+    return pd.DataFrame(linhas)

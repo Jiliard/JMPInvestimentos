@@ -12,6 +12,9 @@ Tabelas:
     indice_diario     Fechamento do Ibovespa em cada pregão (referência do backtesting).
     eventos_acoes     Dividendos e desdobramentos/grupamentos por data ex. Com o preço
                       bruto do histórico, permitem calcular o retorno total das carteiras.
+    liquidez_anual    Negociação de cada ação no ano anterior (critério do NEFIN): volume
+                      diário superado em mais de 80% dos pregões, volume total do ano e se
+                      foi listada antes de dezembro. Calculado uma vez por ano.
 
 Todos os valores gravados vêm das APIs (TradingView e Yahoo Finance), sem estimativas.
 A conexão vem exclusivamente da variável de ambiente DATABASE_URL
@@ -48,7 +51,7 @@ COLUNAS_TEXTO = ["ticker", "nome", "setor", "industria"]
 COLUNAS_NUMERICAS = [
     "preco", "pl", "pvp", "dy", "roic", "roe", "margem", "crescimento", "liquidez",
     "lpa", "vpa", "dpa_12m", "evebit", "patrimonio", "divida_total", "divida_patrimonio",
-    "lpa_medio_3a",
+    "lpa_medio_3a", "ebit", "ev",
 ]
 COLUNAS = COLUNAS_TEXTO + COLUNAS_NUMERICAS
 
@@ -214,6 +217,19 @@ def inicializar_banco():
             coletado_em TIMESTAMP NOT NULL,
             PRIMARY KEY (data, ticker, tipo)
         );
+        CREATE TABLE IF NOT EXISTS liquidez_anual (
+            ano SMALLINT NOT NULL,                  -- ano de negociação avaliado (t-1)
+            ticker VARCHAR(10) NOT NULL,
+            pregoes SMALLINT NOT NULL,              -- pregões do ano a partir da listagem
+            dias_acima SMALLINT NOT NULL,           -- pregões com volume acima de R$ 500 mil
+            volume_ano DOUBLE PRECISION NOT NULL,   -- volume financeiro total do ano (R$)
+            volume_80 DOUBLE PRECISION NOT NULL,    -- volume diário superado em mais de 80% dos pregões
+            listagem DATE,
+            listada_antes BOOLEAN NOT NULL,         -- listada antes de dezembro do ano
+            elegivel BOOLEAN NOT NULL,
+            coletado_em TIMESTAMP NOT NULL,
+            PRIMARY KEY (ano, ticker)
+        );
     """
     try:
         _executar(lambda cursor: cursor.execute(sql))
@@ -332,6 +348,39 @@ def salvar_complementos(fechamentos, eventos):
     except Exception as erro:
         log.error(f"Erro ao gravar Ibovespa e eventos: {erro}")
         return False
+
+
+def salvar_liquidez_anual(df):
+    """Grava o critério de liquidez do NEFIN de um ano (UPSERT). True se gravou."""
+    if df is None or df.empty:
+        return False
+    momento = agora_b3()
+    linhas = [(int(r.ano), r.ticker, int(r.pregoes), int(r.dias_acima), float(r.volume_ano), float(r.volume_80),
+               r.listagem, bool(r.listada_antes), bool(r.elegivel), momento) for r in df.itertuples()]
+    try:
+        _executar(lambda cursor: execute_values(cursor, """
+            INSERT INTO liquidez_anual (ano, ticker, pregoes, dias_acima, volume_ano, volume_80, listagem,
+                                        listada_antes, elegivel, coletado_em)
+            VALUES %s
+            ON CONFLICT (ano, ticker) DO UPDATE SET pregoes = EXCLUDED.pregoes, dias_acima = EXCLUDED.dias_acima,
+                volume_ano = EXCLUDED.volume_ano, volume_80 = EXCLUDED.volume_80, listagem = EXCLUDED.listagem,
+                listada_antes = EXCLUDED.listada_antes, elegivel = EXCLUDED.elegivel, coletado_em = EXCLUDED.coletado_em;
+        """, linhas))
+        log.info(f"Liquidez de {linhas[0][0]} gravada para {len(linhas)} ações.")
+        return True
+    except Exception as erro:
+        log.error(f"Erro ao gravar a liquidez anual: {erro}")
+        return False
+
+
+def ler_liquidez_anual(ano):
+    """Critério de liquidez do NEFIN gravado para o ano `ano` (lista de registros)."""
+    try:
+        return _consultar("SELECT ticker, ano, pregoes, dias_acima, volume_ano, volume_80, listagem, listada_antes, elegivel "
+                          "FROM liquidez_anual WHERE ano = %s;", (ano,))
+    except Exception as erro:
+        log.error(f"Erro ao ler a liquidez de {ano}: {erro}")
+        return []
 
 
 def _sem_pregao(cursor, pregao, linhas):

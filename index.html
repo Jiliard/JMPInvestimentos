@@ -43,7 +43,7 @@
             <h2 class="titulo">Estratégia de ranking</h2>
             <div class="estrategias" role="radiogroup" aria-label="Estratégia de ranking">
                 <button class="estrategia ativa" data-metodo="graham" onclick="selecionarEstrategia('graham')">
-                    <strong>Benjamin Graham</strong><span class="subtitulo">Valor Intrínseco</span></button>
+                    <strong>Benjamin Graham</strong><span class="subtitulo">Preço Justo e Margem de Segurança</span></button>
                 <button class="estrategia" data-metodo="bazin" onclick="selecionarEstrategia('bazin')">
                     <strong>Décio Bazin</strong><span class="subtitulo">Preço Teto por Dividendos</span></button>
                 <button class="estrategia" data-metodo="greenblatt" onclick="selecionarEstrategia('greenblatt')">
@@ -62,7 +62,7 @@
                 <i data-lucide="chevron-down" class="seta-recolher"></i>
             </summary>
             <div class="grade-filtros">
-                <label class="campo"><span>Liquidez mín. (R$) <button type="button" class="info" data-tip="Volume financeiro médio negociado por dia nos últimos 30 pregões. Evita ações difíceis de comprar ou vender." aria-label="Ajuda: liquidez">?</button></span>
+                <label class="campo"><span>Liquidez mín. (R$) <button type="button" class="info" data-tip="Volume financeiro diário que a ação precisa ter superado em mais de 80% dos pregões do ano anterior. Evita ações quase sem negócios, difíceis de comprar ou vender e com preço pouco confiável." aria-label="Ajuda: liquidez">?</button></span>
                     <input type="number" id="liq_min" step="100000" onchange="carregarDados()"></label>
                 <label class="campo"><span>P/L máximo <button type="button" class="info" data-tip="Preço dividido pelo lucro por ação. Indica quantos anos de lucro atual equivalem ao preço. Empresas com prejuízo são excluídas." aria-label="Ajuda: P/L">?</button></span>
                     <input type="number" id="pl_max" step="1" onchange="carregarDados()"></label>
@@ -82,7 +82,7 @@
                     <input type="number" id="divida_max" step="0.1" onchange="carregarDados()"></label>
             </div>
             <div class="rodape-filtros">
-                <span class="dica">Campo vazio desativa o filtro. Indicador sem dado na API (N/D) não elimina a empresa, exceto quando falta por prejuízo ou patrimônio negativo.</span>
+                <span class="dica">Campo vazio desativa o filtro. Com um filtro preenchido, a empresa sem esse indicador na API (N/D) sai da lista, pois não há como confirmar que ela cumpre o limite.</span>
                 <button class="link" onclick="restaurarPadrao()"><i data-lucide="rotate-ccw"></i> Restaurar padrão</button>
             </div>
         </details>
