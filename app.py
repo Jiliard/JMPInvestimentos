@@ -83,9 +83,12 @@ def _ler_filtros(args):
 
 
 def _liquidez(ano):
-    """Critério de liquidez do NEFIN gravado para `ano` (relido a cada hora: a rotina completa as faltas)."""
+    """
+    Critério de liquidez do NEFIN gravado para `ano` (relido a cada hora: a rotina completa as faltas).
+    Leitura vazia não fica guardada: o cálculo pode terminar logo depois e deve aparecer na hora.
+    """
     registros, lido_em = _cache_liquidez.get(ano, (None, None))
-    if registros is None or database.agora_b3() - lido_em > timedelta(hours=1):
+    if not registros or database.agora_b3() - lido_em > timedelta(hours=1):
         registros = database.ler_liquidez_anual(ano)
         _cache_liquidez[ano] = (registros, database.agora_b3())
     return registros
